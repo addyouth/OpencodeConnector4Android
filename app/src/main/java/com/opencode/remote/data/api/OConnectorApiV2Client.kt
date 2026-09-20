@@ -25,7 +25,7 @@ import javax.net.ssl.TrustManager
 /**
  * REST API client for OpenCode server v2 (probed on 2.0.10).
  *
- * Base path is /api/*, auth scheme identical to v1 (Basic opencode:password).
+ * Base path is the /api tree, auth scheme identical to v1 (Basic opencode:password).
  * 与 v1 的关键差异（详见 docs/V2-ADAPT.md）：
  * - 列表/单查/创建全部包 {data}（列表另带 cursor），调用方只取 .data
  * - prompt 只收 text；agent/model 先经 setSessionAgent/Model 对齐再 prompt
