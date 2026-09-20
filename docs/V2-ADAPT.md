@@ -54,11 +54,18 @@
 5. 联调：v2 测试服（4099）全流程；v1 回归（现役 4096 不动）。
 6. 打 tag 出 release APK，真机验证。
 
-## 4. 已知待验证（联调时逐项打勾）
+## 4. 已验证（2026-09-20，2.0.10 实测）与待验证
 
-- [ ] `GET /api/session?project=` 取 project id 还是 canonical
-- [ ] `GET /api/agent` 返回包形状（数组还是包对象）
-- [ ] `GET /api/event` 事件名与字段（抓一段真实 stream）
-- [ ] form 回复字段（Form.Detail/Reply）
-- [ ] revert stage→commit 参数
-- [ ] `GET /api/experimental/migration/v1` 是否可辅助迁移
+- [x] `GET /api/session?project=` 取 project **id**（canonical 返回 0 条）
+- [x] `GET /api/agent` 返回 `{location, data[]}`；Agent.Info 字段：
+      id,name,request,description,mode,hidden,permissions。
+      注意 v2 agent 名首字母大写（Build/General/Explore…），传参大小写敏感
+- [x] 会话列表/单查/创建均为 `{data}` 包裹（列表另带 cursor 分页）
+- [x] `GET /api/session/active` 返回 `{data:{}}` map（空即全闲）
+- [x] SSE 帧格式：`data: {"id","type","data"}` + `: heartbeat` 注释行；
+      首帧 `type=server.connected`
+- [x] `GET /api/experimental/migration/v1` → `{"status":"completed"}`
+- [x] `GET /api/model` → `{location, data: Model.Info[]}`（实测 295 个），`enabled` 可用
+- [x] v2 serve 会读到 v1 会话存储（octest 目录下看到了 Vault/02.写作 的 global 项目会话）
+- [ ] form 回复字段（Form.Detail/Reply，需真实 permission/question 事件触发时抓）
+- [ ] revert stage→commit 参数（需有消息的会话上抓）
