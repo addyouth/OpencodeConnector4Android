@@ -167,5 +167,4 @@ data class V2ProviderInfo(
     val integrationID: String? = null,
     val name: String? = null,
     val activation: String? = null,  // auto | enabled | disabled
-    val package: String? = null,
 )

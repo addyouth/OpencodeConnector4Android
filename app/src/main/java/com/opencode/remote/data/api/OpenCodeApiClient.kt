@@ -52,7 +52,7 @@ import javax.net.ssl.TrustManager
  *   GET   /api/fs/read/{path}         → 文件原始内容（读 whitelist 用，需求③）
  *   GET   /api/fs/list                → 目录列表（best-effort）
  *
- * v2 已删除：/todo、/children、/session/status、/question/* → 优雅降级空结果。
+ * v2 已删除：/todo、/children、/session/status、/question/... → 优雅降级空结果。
  * v2 revert 改三阶段（stage→commit），v1 单调用语义降级为 best-effort。
  */
 class OConnectorApiClient @Inject constructor(
