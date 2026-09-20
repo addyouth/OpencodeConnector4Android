@@ -22,9 +22,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # 注：不装 setup-android——ubuntu runner 自带完整 SDK，
+      # 而 android-actions/setup-android@v3 会去装已下架的 tools 包导致失败。
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
