@@ -4,8 +4,11 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import com.opencode.remote.data.api.OConnectorApiClient
+import com.opencode.remote.data.api.OConnectorApiV2Client
 import com.opencode.remote.data.api.OConnectorSseClient
+import com.opencode.remote.data.api.OConnectorSseV2Client
 import com.opencode.remote.data.api.dto.*
+import com.opencode.remote.data.api.dto.v2.*
 import com.opencode.remote.data.datastore.ConnectionConfig
 import com.opencode.remote.data.network.NetworkMonitor
 import com.opencode.remote.service.SseForegroundService
@@ -17,6 +20,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -133,6 +137,36 @@ interface OConnectorRepository {
     fun getBlockingState(sessionId: String): BlockingStateCache?
     /** Clear persisted blocking state for a session. */
     fun clearBlockingState(sessionId: String)
+
+    // ─── Server version (dual-mode v1/v2) ──────────────────────────
+
+    fun getActiveServerVersion(): String
+    fun isV2Server(): Boolean
+
+    // ─── v2 Session Operations (opencode v2 API) ───────────────────
+
+    suspend fun v2ListSessions(project: String? = null, parentID: String? = null): List<V2SessionInfo>
+    suspend fun v2ListAllSessions(): List<V2SessionInfo>
+    suspend fun v2CreateSession(title: String? = null, agent: String? = null, model: V2ModelRef? = null, directory: String? = null): V2SessionInfo
+    suspend fun v2GetSession(sessionId: String): V2SessionInfo
+    suspend fun v2DeleteSession(sessionId: String)
+    suspend fun v2ForkSession(sessionId: String, before: String? = null): V2SessionInfo
+    suspend fun v2InterruptSession(sessionId: String)
+    suspend fun v2RevertStage(sessionId: String, messageID: String)
+    suspend fun v2RevertCommit(sessionId: String)
+    suspend fun v2GetMessages(sessionId: String, limit: Int? = null): List<V2Message>
+    suspend fun v2SendMessage(sessionId: String, text: String)
+    suspend fun v2SetSessionAgent(sessionId: String, agent: String)
+    suspend fun v2SetSessionModel(sessionId: String, model: V2ModelRef)
+    suspend fun v2ReplyPermission(sessionId: String, requestId: String, decision: String, message: String? = null)
+    suspend fun v2ReplyForm(sessionId: String, formId: String, answer: Map<String, JsonElement>)
+    suspend fun v2ListProjects(): List<V2Project>
+    suspend fun v2ListAgents(): List<V2AgentInfo>
+    suspend fun v2ListModels(): List<V2ModelInfo>
+    suspend fun v2GetActiveSessionIds(): Set<String>
+    suspend fun v2GetSessionChildren(parentID: String): List<V2SessionInfo>
+    suspend fun v2TestConnection(): Boolean
+    fun v2SubscribeToEvents(): Flow<V2EventFrame>
 }
 
 /** Cache entry for blocking state, stored by session ID. */
@@ -150,6 +184,8 @@ data class BlockingStateCache(
 class OConnectorRepositoryImpl @Inject constructor(
     private val apiClient: OConnectorApiClient,
     private val sseClient: OConnectorSseClient,
+    private val apiV2Client: OConnectorApiV2Client,
+    private val sseV2Client: OConnectorSseV2Client,
     @ApplicationContext private val context: Context,
     private val json: Json,
     private val networkMonitor: NetworkMonitor,
@@ -170,6 +206,7 @@ class OConnectorRepositoryImpl @Inject constructor(
     private var modelsCacheTime: Long = 0
     private var activeServerId: String? = null
     private var activeServerName: String? = null
+    private var activeServerVersion: String = "v1"
 
     override var activeSessionId: String? = null
     override var activeSessionDirectory: String? = null
@@ -315,6 +352,10 @@ class OConnectorRepositoryImpl @Inject constructor(
 
         apiClient.configure(baseUrl, config.username, config.password, config.insecureTrust)
         sseClient.configure(baseUrl, config.username, config.password, config.autoReconnect, config.insecureTrust)
+        // v2 用同一套凭证（Basic 鉴权相同），调用时按版本选择 client
+        apiV2Client.configure(baseUrl, config.username, config.password, config.insecureTrust)
+        sseV2Client.configure(baseUrl, config.username, config.password, config.autoReconnect, config.insecureTrust)
+        activeServerVersion = config.version
         connected = true
         connectionGeneration.incrementAndGet()
     }
@@ -354,6 +395,8 @@ class OConnectorRepositoryImpl @Inject constructor(
         networkMonitor.onNetworkAvailable = null
         try { apiClient.close() } catch (_: Exception) {}
         try { sseClient.close() } catch (_: Exception) {}
+        try { apiV2Client.close() } catch (_: Exception) {}
+        try { sseV2Client.close() } catch (_: Exception) {}
         try { SseForegroundService.stop(context) } catch (_: Exception) {}
         connected = false
         cachedAgents = null
@@ -364,12 +407,96 @@ class OConnectorRepositoryImpl @Inject constructor(
         activeSessionDirectory = null
         activeServerId = null
         activeServerName = null
+        activeServerVersion = "v1"
     }
 
     private fun requireClient(): OConnectorApiClient {
         check(connected) { "Not connected to server" }
         return apiClient
     }
+
+    private fun requireV2Client(): OConnectorApiV2Client {
+        check(connected) { "Not connected to server" }
+        return apiV2Client
+    }
+
+    // ─── Server version ────────────────────────────────────────────
+
+    override fun getActiveServerVersion(): String = activeServerVersion
+
+    override fun isV2Server(): Boolean = activeServerVersion == "v2"
+
+    // ─── v2 Operations (opencode v2 API) ───────────────────────────
+
+    override suspend fun v2ListSessions(project: String?, parentID: String?): List<V2SessionInfo> =
+        requireV2Client().listSessions(project, parentID)
+
+    override suspend fun v2ListAllSessions(): List<V2SessionInfo> =
+        requireV2Client().listAllSessions()
+
+    override suspend fun v2CreateSession(title: String?, agent: String?, model: V2ModelRef?, directory: String?): V2SessionInfo =
+        requireV2Client().createSession(title, agent, model, directory)
+
+    override suspend fun v2GetSession(sessionId: String): V2SessionInfo =
+        requireV2Client().getSession(sessionId)
+
+    override suspend fun v2DeleteSession(sessionId: String) =
+        requireV2Client().deleteSession(sessionId)
+
+    override suspend fun v2ForkSession(sessionId: String, before: String?): V2SessionInfo =
+        requireV2Client().forkSession(sessionId, before)
+
+    override suspend fun v2InterruptSession(sessionId: String) =
+        requireV2Client().interruptSession(sessionId)
+
+    override suspend fun v2RevertStage(sessionId: String, messageID: String) =
+        requireV2Client().revertStage(sessionId, messageID)
+
+    override suspend fun v2RevertCommit(sessionId: String) =
+        requireV2Client().revertCommit(sessionId)
+
+    override suspend fun v2GetMessages(sessionId: String, limit: Int?): List<V2Message> =
+        requireV2Client().getMessages(sessionId, limit)
+
+    /**
+     * v2 发消息：prompt 只带 text。调用方（UI）在发送前先用
+     * v2SetSessionAgent/v2SetSessionModel 把会话对齐到目标选择。
+     */
+    override suspend fun v2SendMessage(sessionId: String, text: String) =
+        requireV2Client().sendMessage(sessionId, text)
+
+    override suspend fun v2SetSessionAgent(sessionId: String, agent: String) =
+        requireV2Client().setSessionAgent(sessionId, agent)
+
+    override suspend fun v2SetSessionModel(sessionId: String, model: V2ModelRef) =
+        requireV2Client().setSessionModel(sessionId, model)
+
+    override suspend fun v2ReplyPermission(sessionId: String, requestId: String, decision: String, message: String?) =
+        requireV2Client().replyPermission(sessionId, requestId, decision, message)
+
+    override suspend fun v2ReplyForm(sessionId: String, formId: String, answer: Map<String, JsonElement>) =
+        requireV2Client().replyForm(sessionId, formId, answer)
+
+    override suspend fun v2ListProjects(): List<V2Project> =
+        requireV2Client().listProjects()
+
+    override suspend fun v2ListAgents(): List<V2AgentInfo> =
+        requireV2Client().listAgents()
+
+    override suspend fun v2ListModels(): List<V2ModelInfo> =
+        requireV2Client().listModels()
+
+    override suspend fun v2GetActiveSessionIds(): Set<String> =
+        requireV2Client().getActiveSessionIds()
+
+    override suspend fun v2GetSessionChildren(parentID: String): List<V2SessionInfo> =
+        requireV2Client().getSessionChildren(parentID)
+
+    override suspend fun v2TestConnection(): Boolean =
+        apiV2Client.testConnection()
+
+    override fun v2SubscribeToEvents(): Flow<V2EventFrame> =
+        sseV2Client.subscribeToEvents()
 
     // ─── Session Operations ──────────────────────────────────────────
 

@@ -31,6 +31,8 @@ data class ConnectionConfig(
     val insecureTrust: Boolean = false,
     val autoReconnect: Boolean = true,
     val serverId: String? = null,
+    /** 服务器版本：v1 或 v2（决定走哪套 API；v1 路径保持原样） */
+    val version: String = "v1",
 )
 
 data class StoredModelSelection(
