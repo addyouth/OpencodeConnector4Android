@@ -61,6 +61,10 @@ class OConnectorApiClient @Inject constructor(
 
     private var authHeader: String? = null
     private var insecureTrust: Boolean = false
+    private var baseUrl: String = ""
+    /** 最近一次 testConnection 失败的真实原因（成功时为 null）。B 方案：失败不再吞异常。 */
+    var lastTestError: String? = null
+        private set
 
     @OptIn(ExperimentalSerializationApi::class)
     private var client: HttpClient = createClient()
@@ -107,7 +111,10 @@ class OConnectorApiClient @Inject constructor(
 
     @OptIn(ExperimentalSerializationApi::class)
     private suspend fun getJson(url: String, block: HttpRequestBuilder.() -> Unit = {}): JsonElement =
-        Json.parseToJsonElement(client.get(url, block).bodyAsText())
+        Json.parseToJsonElement(client.get(fullUrl(url), block).bodyAsText())
+
+    /** 相对路径拼完整 URL（A 方案根治：configure 丢 baseUrl 的回归 bug）。 */
+    private fun fullUrl(path: String): String = baseUrl.trimEnd('/') + path
 
     @OptIn(ExperimentalSerializationApi::class)
     private fun JsonElement.dataArray(): JsonArray? = when (this) {
@@ -130,6 +137,7 @@ class OConnectorApiClient @Inject constructor(
      */
     fun configure(baseUrl: String, username: String = "", password: String = "", insecureTrust: Boolean = false) {
         close()
+        this.baseUrl = baseUrl.trim().trimEnd('/')
         this.insecureTrust = insecureTrust
         authHeader = if (password.isNotEmpty()) {
             "Basic " + Base64.encodeToString(
@@ -189,7 +197,7 @@ class OConnectorApiClient @Inject constructor(
 
     /** DELETE /api/session/{id} */
     suspend fun deleteSession(id: String, directory: String? = null) {
-        client.delete("/api/session/$id") {}
+        client.delete(fullUrl("/api/session/$id")) {}
     }
 
     /** POST /api/session/{id}/fork → {data: Session.Info} */
@@ -208,7 +216,7 @@ class OConnectorApiClient @Inject constructor(
 
     /** POST /api/session/{id}/interrupt（v1 abort） */
     suspend fun abortSession(id: String, directory: String? = null) {
-        try { client.post("/api/session/$id/interrupt") {} } catch (e: Exception) {
+        try { client.post(fullUrl("/api/session/$id/interrupt")) {} } catch (e: Exception) {
             Log.w(TAG, "abort failed (may already be idle)", e)
         }
     }
@@ -221,7 +229,7 @@ class OConnectorApiClient @Inject constructor(
     suspend fun revertSession(id: String, messageID: String, directory: String? = null): SessionInfo {
         try {
             getJson("/api/session/$id/revert/stage") { setBody(RevertRequest(messageID = messageID)) }
-            try { client.post("/api/session/$id/revert/commit") { setBody("{}") } } catch (e: Exception) {
+            try { client.post(fullUrl("/api/session/$id/revert/commit")) { setBody("{}") } } catch (e: Exception) {
                 Log.w(TAG, "revert commit failed", e)
             }
         } catch (e: Exception) {
@@ -269,14 +277,14 @@ class OConnectorApiClient @Inject constructor(
             try { switchModel(sessionId, providerID, modelID, variant) }
             catch (e: Exception) { Log.w(TAG, "switchModel before prompt failed: ${e.message}") }
         }
-        client.post("/api/session/$sessionId/prompt") {
+        client.post(fullUrl("/api/session/$sessionId/prompt")) {
             setBody(V2PromptBody(text = text, agents = agent?.let { listOf(it) }))
         }
     }
 
     /** POST /api/session/{id}/agent → {agent}（需求②切代理） */
     suspend fun switchAgent(sessionId: String, agent: String) {
-        client.post("/api/session/$sessionId/agent") {
+        client.post(fullUrl("/api/session/$sessionId/agent")) {
             setBody(V2AgentSwitchBody(agent = agent))
         }
         Log.d(TAG, "Switched session $sessionId agent → $agent")
@@ -284,7 +292,7 @@ class OConnectorApiClient @Inject constructor(
 
     /** POST /api/session/{id}/model → {model: Model.Ref}（需求③选模型后切换） */
     suspend fun switchModel(sessionId: String, providerID: String?, modelID: String?, variant: String? = null) {
-        client.post("/api/session/$sessionId/model") {
+        client.post(fullUrl("/api/session/$sessionId/model")) {
             setBody(V2ModelSwitchBody(model = V2ModelRef(id = modelID, providerID = providerID, variant = variant)))
         }
     }
@@ -300,7 +308,7 @@ class OConnectorApiClient @Inject constructor(
             Log.w(TAG, "replyPermission: sessionId missing, skipping (request=$requestId)")
             return
         }
-        client.post("/api/session/$sessionId/permission/$requestId/reply") {
+        client.post(fullUrl("/api/session/$sessionId/permission/$requestId/reply")) {
             setBody(V2PermissionReplyBody(reply = reply, message = message))
         }
         Log.d(TAG, "Permission reply: $reply for request=$requestId session=$sessionId")
@@ -360,12 +368,14 @@ class OConnectorApiClient @Inject constructor(
         }
     }
 
-    /** 连通性：GET /api/project */
+    /** 连通性：GET /api/project。失败时真实原因存 lastTestError，UI 可显示（B 方案）。 */
     suspend fun testConnection(): Boolean = try {
         getJson("/api/project") {}
+        lastTestError = null
         true
     } catch (e: Exception) {
-        Log.w(TAG, "Test connection failed: ${e.javaClass.simpleName}: ${e.message}")
+        lastTestError = "${e.javaClass.simpleName}: ${e.message}"
+        Log.w(TAG, "Test connection failed: $lastTestError")
         false
     }
 
@@ -402,7 +412,7 @@ class OConnectorApiClient @Inject constructor(
 
     /** GET /api/fs/read/{path} → 文件原始内容 */
     suspend fun readFileContent(path: String, directory: String? = null): FileContent {
-        val body = client.get("/api/fs/read/${encPath(path)}") {}.bodyAsText()
+        val body = client.get(fullUrl("/api/fs/read/${encPath(path)}")) {}.bodyAsText()
         return FileContent(type = "text", content = body)
     }
 
@@ -447,7 +457,7 @@ class OConnectorApiClient @Inject constructor(
                 } else null
             } ?: return emptySet()
 
-            val raw = client.get("/api/fs/read/${encPath(docPath)}") {}.bodyAsText()
+            val raw = client.get(fullUrl("/api/fs/read/${encPath(docPath)}")) {}.bodyAsText()
             val root = json.parseToJsonElement(raw).jsonObject
             val providers = root["provider"]?.jsonObject ?: return emptySet()
 

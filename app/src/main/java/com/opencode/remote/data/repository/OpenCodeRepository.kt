@@ -92,6 +92,9 @@ interface OConnectorRepository {
 
     suspend fun testConnection(): Boolean
 
+    /** 最近一次 testConnection 失败的真实原因（成功时为 null）。 */
+    fun getLastTestError(): String?
+
     // ─── Agents ─────────────────────────────────────────────────────────
 
     suspend fun listAgents(): List<AgentInfo>
@@ -455,6 +458,9 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     override suspend fun testConnection(): Boolean =
         requireClient().testConnection()
+
+    override fun getLastTestError(): String? =
+        try { apiClient.lastTestError } catch (_: Exception) { null }
 
     // ─── Agents ─────────────────────────────────────────────────────────
 

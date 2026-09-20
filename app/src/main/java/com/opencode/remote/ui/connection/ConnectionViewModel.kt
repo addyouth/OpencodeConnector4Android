@@ -146,10 +146,11 @@ class ConnectionViewModel @Inject constructor(
                     _uiState.update { it.copy(isConnecting = false, isConnected = true) }
                 } else {
                     repository.disconnect()
+                    val detail = try { repository.getLastTestError() } catch (_: Exception) { null }
                     _uiState.update {
                         it.copy(
                             isConnecting = false,
-                            error = s.errCannotConnect
+                            error = if (detail != null) "${s.errCannotConnect} ($detail)" else s.errCannotConnect
                         )
                     }
                 }
@@ -227,10 +228,11 @@ class ConnectionViewModel @Inject constructor(
                     _uiState.update { it.copy(isConnecting = false, isConnected = true) }
                 } else {
                     repository.disconnect()
+                    val detail = try { repository.getLastTestError() } catch (_: Exception) { null }
                     _uiState.update {
                         it.copy(
                             isConnecting = false,
-                            error = s.errCannotConnect
+                            error = if (detail != null) "${s.errCannotConnect} ($detail)" else s.errCannotConnect
                         )
                     }
                 }
