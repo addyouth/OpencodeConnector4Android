@@ -50,7 +50,8 @@ interface OConnectorRepository {
     suspend fun listSessions(directory: String? = null): List<SessionInfo>
     /** Fetch sessions from ALL known projects (multi-directory query). */
     suspend fun listAllSessions(): List<SessionInfo>
-    suspend fun createSession(directory: String? = null): CreateSessionResponse
+    /** agent 参数：新建会话指定默认代理（需求②） */
+    suspend fun createSession(directory: String? = null, agent: String? = null): CreateSessionResponse
     suspend fun getSession(sessionId: String, directory: String? = null): SessionInfo
     suspend fun deleteSession(sessionId: String, directory: String? = null)
     suspend fun forkSession(sessionId: String, directory: String? = null): CreateSessionResponse
@@ -62,10 +63,14 @@ interface OConnectorRepository {
 
     suspend fun getMessages(sessionId: String, directory: String? = null, limit: Int? = null): List<MessageInfo>
     suspend fun sendMessage(sessionId: String, message: String, agent: String? = null, providerID: String? = null, modelID: String? = null, variant: String? = null, directory: String? = null)
+    /** v2: 切换会话 agent（需求②进会话带主代理） */
+    suspend fun switchAgent(sessionId: String, agent: String)
+    /** v2: 切换会话模型（v1 每消息模型语义在 v2 下改为会话级） */
+    suspend fun switchModel(sessionId: String, providerID: String?, modelID: String?, variant: String? = null)
 
     // ─── Permission / Question Replies ──────────────────────────────
 
-    suspend fun replyPermission(requestId: String, reply: String, message: String? = null, directory: String? = null)
+    suspend fun replyPermission(requestId: String, reply: String, message: String? = null, directory: String? = null, sessionId: String? = null)
     suspend fun replyQuestion(requestId: String, answers: List<List<String>>, directory: String? = null)
     suspend fun rejectQuestion(requestId: String, directory: String? = null)
 
@@ -379,8 +384,8 @@ class OConnectorRepositoryImpl @Inject constructor(
     override suspend fun listAllSessions(): List<SessionInfo> =
         requireClient().listAllSessions()
 
-    override suspend fun createSession(directory: String?): CreateSessionResponse =
-        requireClient().createSession(directory)
+    override suspend fun createSession(directory: String?, agent: String?): CreateSessionResponse =
+        requireClient().createSession(directory, agent)
 
     override suspend fun getSession(sessionId: String, directory: String?): SessionInfo =
         requireClient().getSession(sessionId, directory)
@@ -408,10 +413,16 @@ class OConnectorRepositoryImpl @Inject constructor(
     override suspend fun sendMessage(sessionId: String, message: String, agent: String?, providerID: String?, modelID: String?, variant: String?, directory: String?) =
         requireClient().sendMessage(sessionId, message, agent, providerID, modelID, variant, directory)
 
+    override suspend fun switchAgent(sessionId: String, agent: String) =
+        requireClient().switchAgent(sessionId, agent)
+
+    override suspend fun switchModel(sessionId: String, providerID: String?, modelID: String?, variant: String?) =
+        requireClient().switchModel(sessionId, providerID, modelID, variant)
+
     // ─── Permission / Question Replies ──────────────────────────────
 
-    override suspend fun replyPermission(requestId: String, reply: String, message: String?, directory: String?) =
-        requireClient().replyPermission(requestId, reply, message, directory)
+    override suspend fun replyPermission(requestId: String, reply: String, message: String?, directory: String?, sessionId: String?) =
+        requireClient().replyPermission(requestId, reply, message, directory, sessionId)
 
     override suspend fun replyQuestion(requestId: String, answers: List<List<String>>, directory: String?) =
         requireClient().replyQuestion(requestId, answers, directory)
@@ -472,13 +483,58 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     // ─── Config / Providers ─────────────────────────────────────────────
 
+    /**
+     * v2 适配（需求③）：
+     *   /api/provider + /api/model 全量模型 → 读服务端 opencode.json 的 v1 whitelist
+     *   → 只保留勾选模型 → 按 provider 分组构造 v1 ProviderList 形状（UI 零改动）。
+     * whitelist 读取失败时降级为全量（不阻塞使用）。
+     */
     override suspend fun listProviders(): ProviderList {
-        val providers = requireClient().listProviders()
-        cachedModels = providers.providers.flatMap { it.models.values }.map { p ->
-            ModelInfo(id = p.id, name = p.name)
+        val providers = requireClient().listProvidersV2()
+        val models = requireClient().listModelsV2()
+        val whitelist = requireClient().readModelWhitelist()
+
+        val filteredModels = if (whitelist.isEmpty()) {
+            models
+        } else {
+            models.filter { m ->
+                whitelist.contains(m.whitelistKey) || whitelist.contains(m.modelID) || whitelist.contains(m.id)
+            }
+        }
+        Log.d(TAG, "Model filter: ${models.size} total → ${filteredModels.size} whitelisted")
+
+        val providerNameById = providers.associate { it.id to (it.name ?: it.id) }
+        val activationById = providers.associate { it.id to it.activation }
+        val providerInfos = filteredModels.groupBy { it.providerID }.map { (pid, mods) ->
+            ProviderInfo(
+                id = pid,
+                name = providerNameById[pid] ?: pid,
+                models = mods.associate { m ->
+                    m.modelID to ProviderModelInfo(
+                        id = m.modelID,
+                        name = m.name ?: m.modelID,
+                        limit = m.limit,
+                        variants = m.variants.associate { v ->
+                            v.id to kotlinx.serialization.json.JsonPrimitive(v.name ?: v.id)
+                        },
+                    )
+                },
+            )
+        }.sortedBy { it.id }
+
+        val connected = providerInfos
+            .filter { activationById[it.id] != "disabled" }
+            .map { it.id }
+
+        val result = ProviderList(providers = providerInfos, connected = connected)
+
+        // 缓存给 getCachedModels()（legacy availableModels 用）
+        cachedModels = filteredModels.map { m ->
+            ModelInfo(id = m.modelID, name = m.name, providerID = m.providerID, status = m.status)
         }
         modelsCacheTime = System.currentTimeMillis()
-        return providers
+        Log.d(TAG, "ProviderList built: ${providerInfos.size} providers, ${filteredModels.size} models, connected=${connected.size}")
+        return result
     }
 
     override fun getCachedModels(): List<ModelInfo> = cachedModels ?: emptyList()

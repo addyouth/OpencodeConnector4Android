@@ -6,8 +6,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
 /**
- * 实际 API: GET /session/{id}
- * 字段完全匹配 OpenCode server v1.14.x 响应
+ * 实际 API (v2): GET /api/session → {data: [Session.Info], cursor}
+ * v2 Session.Info 核心字段: id, projectID, agent, model, cost, tokens, outcome,
+ * time, title, location{directory}, parentID?, fork?
+ * 保留 v1 兼容字段（slug/path/version/summary/permission/revert 在 v2 下为 null）。
  */
 @Immutable
 @Serializable
@@ -16,6 +18,7 @@ data class SessionInfo(
     val slug: String? = null,
     @SerialName("projectID")
     val projectID: String? = null,
+    /** v2 无顶层 directory —— 位于 location.directory；保留兼容，由翻译层或 location 提供 */
     val directory: String? = null,
     val path: String? = null,
     val title: String? = null,
@@ -27,6 +30,25 @@ data class SessionInfo(
     val time: SessionTime? = null,
     /** Revert state — non-null when the session has an active undo. */
     val revert: SessionRevert? = null,
+    // ─── v2 新增字段 ───
+    /** v2 Session.Info.agent —— 会话当前 agent 名（需求②「进会话带主代理」的数据源） */
+    val agent: String? = null,
+    /** v2 Session.Info.model —— 会话当前模型 */
+    val model: MessageModel? = null,
+    /** v2 Session.Info.location —— {directory} 项目目录 */
+    val location: SessionLocation? = null,
+    /** v2 Session.Info.outcome —— succeeded/failed/… */
+    val outcome: String? = null,
+    val cost: Double? = null,
+    val tokens: MessageTokens? = null,
+) {
+    /** 兼容属性：v2 下 directory = location.directory */
+    val resolvedDirectory: String? get() = directory ?: location?.directory
+}
+
+@Serializable
+data class SessionLocation(
+    val directory: String? = null,
 )
 
 /** Revert marker on a session (from POST /session/{id}/revert). */
@@ -65,7 +87,8 @@ data class SessionTime(
 )
 
 /**
- * 实际 API: POST /session 返回值
+ * 实际 API (v2): POST /api/session → {data: Session.Info}
+ * 翻译层从 Session.Info 映射本结构（v1 兼容字段保留为空）。
  */
 @Serializable
 data class CreateSessionResponse(
@@ -78,7 +101,51 @@ data class CreateSessionResponse(
     val path: String? = null,
     val version: String? = null,
     val time: SessionTime? = null,
+    // ─── v2 字段 ───
+    val agent: String? = null,
+    val model: MessageModel? = null,
+    val location: SessionLocation? = null,
+) {
+    companion object {
+        /** 从 v2 Session.Info 映射 */
+        fun fromSession(info: SessionInfo): CreateSessionResponse = CreateSessionResponse(
+            id = info.id,
+            title = info.title,
+            projectID = info.projectID,
+            directory = info.directory ?: info.location?.directory,
+            path = info.path,
+            version = info.version,
+            time = info.time,
+            agent = info.agent,
+            model = info.model,
+            location = info.location,
+        )
+    }
+}
+
+// ─── v2 请求体 ──────────────────────────────────────────────────────────
+
+/**
+ * v2: POST /api/session body
+ * 字段: id?, title?, agent?, model?: Model.Ref, location?: Location.PublicRef, metadata?, permissions?
+ * 全可选；encodeDefaults=false 时空字段不发送。
+ */
+@Serializable
+data class V2CreateSessionBody(
+    val title: String? = null,
+    val agent: String? = null,
+    val location: V2LocationRef? = null,
 )
+
+/** v2 Location.PublicRef: {directory: string} */
+@Serializable
+data class V2LocationRef(
+    val directory: String? = null,
+) {
+    companion object {
+        fun of(directory: String): V2LocationRef = V2LocationRef(directory = directory)
+    }
+}
 
 // session 列表就是 List<SessionInfo>，无需额外包装
 
@@ -133,7 +200,12 @@ data class MessageModel(
     @SerialName("modelID")
     val modelID: String? = null,
     val variant: String? = null,
-)
+    /** v2 Model.Ref 用 `id` 而非 `modelID`——自动反序列化时兜底映射 */
+    val id: String? = null,
+) {
+    /** v1 用 modelID，v2 用 id；两者都可能的统一取法 */
+    val resolvedModelID: String? get() = modelID ?: id
+}
 
 @Serializable
 data class MessageTime(
@@ -241,6 +313,48 @@ data class SendMessageRequest(
 data class ModelRef(
     val providerID: String? = null,
     val modelID: String? = null,
+)
+
+// ─── v2 请求体（续） ─────────────────────────────────────────────────────
+
+/** v2 Model.Ref —— {id, providerID, variant?}（id 为模型 ID） */
+@Serializable
+data class V2ModelRef(
+    val id: String? = null,
+    @SerialName("providerID")
+    val providerID: String? = null,
+    val variant: String? = null,
+)
+
+/**
+ * v2: POST /api/session/{id}/prompt body —— {text(必填), agents?, files?, skills?, metadata?, delivery?, resume?}
+ * 并发/投递语义与 v1 的 prompt_async 对齐。
+ */
+@Serializable
+data class V2PromptBody(
+    val text: String,
+    val agents: List<String>? = null,
+    val delivery: String? = null,
+    val resume: Boolean? = null,
+)
+
+/** v2: POST /api/session/{id}/agent body —— {agent: "id"|"name"} */
+@Serializable
+data class V2AgentSwitchBody(
+    val agent: String,
+)
+
+/** v2: POST /api/session/{id}/model body —— {model: Model.Ref} */
+@Serializable
+data class V2ModelSwitchBody(
+    val model: V2ModelRef,
+)
+
+/** v2: POST /api/session/{sessionID}/permission/{requestID}/reply body */
+@Serializable
+data class V2PermissionReplyBody(
+    val reply: String,
+    val message: String? = null,
 )
 
 @Serializable

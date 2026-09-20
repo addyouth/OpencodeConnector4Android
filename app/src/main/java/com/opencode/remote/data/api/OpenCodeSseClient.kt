@@ -128,7 +128,7 @@ class OConnectorSseClient @Inject constructor(
             }
 
             try {
-                val sseUrl = "$baseUrl/global/event"
+                val sseUrl = "$baseUrl/api/event"
                 val client = synchronized(this) { sseClient }
                 client.prepareGet(sseUrl) {
                     headers {
@@ -156,8 +156,10 @@ class OConnectorSseClient @Inject constructor(
                             val jsonStr = line.removePrefix("data:").trim()
                             if (jsonStr.isNotEmpty()) {
                                 try {
-                                    val event = json.decodeFromString<ServerEvent>(jsonStr)
-                                    send(event)
+                                    // v2 事件 → V2EventRaw → 翻译成 v1 ServerEvent（null = UI 不消费，跳过）
+                                    val raw = json.decodeFromString<V2EventRaw>(jsonStr)
+                                    val event = V2SseTranslation.toServerEvent(raw)
+                                    if (event != null) send(event)
                                 } catch (e: Exception) {
                                     Log.w(TAG, "Failed to parse SSE event: $jsonStr", e)
                                 }

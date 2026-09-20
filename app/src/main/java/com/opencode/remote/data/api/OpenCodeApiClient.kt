@@ -4,18 +4,25 @@ import android.util.Log
 import android.util.Base64
 import com.opencode.remote.data.api.dto.*
 import io.ktor.client.*
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlinx.serialization.ExperimentalSerializationApi
-import io.ktor.client.call.*
 import io.ktor.client.engine.okhttp.*
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
+import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import javax.inject.Inject
 import java.net.URLEncoder
 import javax.net.ssl.SSLContext
@@ -24,19 +31,29 @@ import java.security.cert.X509Certificate
 import javax.net.ssl.TrustManager
 
 /**
- * REST API client for OpenCode server v1.14.x
+ * REST API client for OpenCode server v2 (0.0.0.0:4096, Basic auth).
  *
- * All routes match actual server paths (verified via curl):
- *   GET  /session?list              → List<SessionInfo>
- *   POST /session                   → CreateSessionResponse
- *   GET  /session/{id}              → SessionInfo
- *   DELETE /session/{id}            → 200 OK
- *   POST /session/{id}/fork         → CreateSessionResponse
- *   POST /session/{id}/abort        → 200 OK
- *   GET  /session/{id}/message      → List<MessageInfo>
- *   POST /session/{id}/prompt_async → 204 No Content (async, AI output via SSE)
- *   GET  /session/{id}/todo         → List<TodoItem>
- *   GET  /project/current           → ProjectInfo
+ * All routes verified against v2 OpenAPI spec + live 4096 captures:
+ *   GET   /api/session?list           → {data: [Session.Info], cursor}   （跨项目全量，需求②）
+ *   POST  /api/session                → {data: Session.Info}
+ *   GET   /api/session/{id}           → {data: Session.Info}
+ *   DELETE /api/session/{id}          → 204
+ *   POST  /api/session/{id}/fork      → {data: Session.Info}
+ *   POST  /api/session/{id}/interrupt → 中断（v1 abort）
+ *   GET   /api/session/{id}/message   → {data: [Message], cursor}  → V2MessageParser 翻译
+ *   POST  /api/session/{id}/prompt    → {text, agents?}（v2 PromptInput）
+ *   POST  /api/session/{id}/agent     → {agent}
+ *   POST  /api/session/{id}/model     → {model: Model.Ref}
+ *   GET   /api/agent                  → {location, data: [Agent.Info]}
+ *   GET   /api/project                → 裸数组 [Project.Info]（无 data 包装）
+ *   GET   /api/model                  → {location, data: [Model.Info]}   （需求③ 过滤源）
+ *   GET   /api/provider               → {location, data: [Provider.Info]}
+ *   GET   /api/config                 → 裸数组 [Config.Entry]（opencode.json 路径源）
+ *   GET   /api/fs/read/{path}         → 文件原始内容（读 whitelist 用，需求③）
+ *   GET   /api/fs/list                → 目录列表（best-effort）
+ *
+ * v2 已删除：/todo、/children、/session/status、/question/* → 优雅降级空结果。
+ * v2 revert 改三阶段（stage→commit），v1 单调用语义降级为 best-effort。
  */
 class OConnectorApiClient @Inject constructor(
     private val json: Json,
@@ -82,6 +99,31 @@ class OConnectorApiClient @Inject constructor(
         private const val MAX_MESSAGES = 50
     }
 
+    // ─── 低层工具 ────────────────────────────────────────────────────────
+
+    /** URL 编码文件路径（fs/read 路径段用；空格用 %20 而非 +） */
+    private fun encPath(path: String): String =
+        URLEncoder.encode(path, "UTF-8").replace("+", "%20")
+
+    @OptIn(ExperimentalSerializationApi::class)
+    private suspend fun getJson(url: String, block: HttpRequestBuilder.() -> Unit = {}): JsonElement =
+        client.get(url, block).body<JsonElement>()
+
+    @OptIn(ExperimentalSerializationApi::class)
+    private fun JsonElement.dataArray(): JsonArray? = when (this) {
+        is JsonObject -> this["data"] as? JsonArray
+        else -> null
+    }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    private inline fun <reified T> JsonElement.decodeDataList(): List<T> {
+        val arr = dataArray() ?: return emptyList()
+        return arr.mapNotNull { item ->
+            try { json.decodeFromJsonElement(kotlinx.serialization.serializer<T>(), item) }
+            catch (e: Exception) { Log.w(TAG, "Failed to decode list item: $item", e); null }
+        }
+    }
+
     /**
      * Configure (or reconfigure) the client with connection parameters.
      * Called by the repository when a new connection is established.
@@ -95,147 +137,121 @@ class OConnectorApiClient @Inject constructor(
                 Base64.NO_WRAP
             )
         } else null
-        client = HttpClient(OkHttp) {
-            install(ContentNegotiation) { json(json) }
-            install(HttpTimeout) {
-                requestTimeoutMillis = 30_000
-                connectTimeoutMillis = 10_000
-                socketTimeoutMillis = 30_000
-            }
-            defaultRequest {
-                url(baseUrl)
-                contentType(ContentType.Application.Json)
-                authHeader?.let { header(HttpHeaders.Authorization, it) }
-            }
-            engine {
-                if (insecureTrust) {
-                    val trustManager = object : X509TrustManager {
-                        override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
-                        override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
-                        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-                    }
-                    val sslContext = SSLContext.getInstance("TLS")
-                    sslContext.init(null, arrayOf<TrustManager>(trustManager), java.security.SecureRandom())
-                    config {
-                        sslSocketFactory(sslContext.socketFactory, trustManager)
-                        hostnameVerifier { _, _ -> true }
-                    }
-                }
-            }
-        }
+        client = createClient(insecureTrust)
     }
-
-    /** Encode directory path for HTTP header (RFC 7230: headers are ASCII-only). */
-    private fun encDir(path: String): String =
-        URLEncoder.encode(path, "UTF-8")
 
     // ─── Sessions ──────────────────────────────────────────────────────
 
-    /** GET /session?list → returns array directly. Optional directory/scope filter. */
+    /** GET /api/session → {data, cursor}；v2 返回全部项目会话（需求②在全量层天然满足） */
+    @OptIn(ExperimentalSerializationApi::class)
     suspend fun listSessions(directory: String? = null, scope: String? = null): List<SessionInfo> {
-        val sessions = client.get("/session") {
+        val el = getJson("/api/session") {
             parameter("list", "")
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
+            directory?.let { parameter("directory", it) }
             scope?.let { parameter("scope", it) }
-        }.body<List<SessionInfo>>()
-        Log.d(TAG, "Loaded ${sessions.size} sessions for dir=$directory scope=$scope")
+        }
+        val sessions = el.decodeDataList<SessionInfo>()
+        Log.d(TAG, "Loaded ${sessions.size} sessions (v2, cross-project) dir=$directory")
         return sessions
     }
 
-    /** POST /session with empty body → returns new session. Optional directory to set project. */
-    suspend fun createSession(directory: String? = null): CreateSessionResponse =
-        client.post("/session") {
-            setBody("{}")
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
-        }.body<CreateSessionResponse>()
+    /** v2: 单次 GET /api/session 即返回全部项目会话 → 直接复用 listSessions */
+    suspend fun listAllSessions(): List<SessionInfo> = listSessions(null, null)
 
-    /** GET /session/{id} */
-    suspend fun getSession(id: String, directory: String? = null): SessionInfo =
-        client.get("/session/$id") {
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
-        }.body<SessionInfo>()
+    /** POST /api/session → {data: Session.Info}。显式传 agent（需求②默认主代理） */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun createSession(directory: String? = null, agent: String? = null): CreateSessionResponse {
+        val body = V2CreateSessionBody(
+            title = null,
+            agent = agent,
+            location = directory?.let { V2LocationRef.of(it) },
+        )
+        val el = getJson("/api/session") { setBody(body) }
+        return try {
+            CreateSessionResponse.fromSession(
+                json.decodeFromJsonElement(SessionInfo.serializer(), el.jsonObject["data"] ?: el)
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "createSession: odd response $el", e)
+            CreateSessionResponse()
+        }
+    }
 
-    /** DELETE /session/{id} */
+    /** GET /api/session/{id} → {data: Session.Info} */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun getSession(id: String, directory: String? = null): SessionInfo {
+        val el = getJson("/api/session/$id") {}
+        return json.decodeFromJsonElement(
+            SessionInfo.serializer(),
+            el.jsonObject["data"] ?: el
+        )
+    }
+
+    /** DELETE /api/session/{id} */
     suspend fun deleteSession(id: String, directory: String? = null) {
-        client.delete("/session/$id") {
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
+        client.delete("/api/session/$id") {}
+    }
+
+    /** POST /api/session/{id}/fork → {data: Session.Info} */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun forkSession(id: String, directory: String? = null): CreateSessionResponse {
+        val el = getJson("/api/session/$id/fork") { setBody("{}") }
+        return try {
+            CreateSessionResponse.fromSession(
+                json.decodeFromJsonElement(SessionInfo.serializer(), el.jsonObject["data"] ?: el)
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "forkSession: odd response $el", e)
+            CreateSessionResponse()
         }
     }
 
-    /** POST /session/{id}/fork with empty body */
-    suspend fun forkSession(id: String, directory: String? = null): CreateSessionResponse =
-        client.post("/session/$id/fork") {
-            setBody("{}")
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
-        }.body<CreateSessionResponse>()
-
-    /** POST /session/{id}/abort */
+    /** POST /api/session/{id}/interrupt（v1 abort） */
     suspend fun abortSession(id: String, directory: String? = null) {
-        client.post("/session/$id/abort") {
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
+        try { client.post("/api/session/$id/interrupt") {} } catch (e: Exception) {
+            Log.w(TAG, "abort failed (may already be idle)", e)
         }
     }
 
-    /** POST /session/{id}/revert — undo last user message (soft-hide, file rollback on server) */
-    suspend fun revertSession(id: String, messageID: String, directory: String? = null): SessionInfo =
-        client.post("/session/$id/revert") {
-            setBody(RevertRequest(messageID = messageID))
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
+    /**
+     * v2 revert 为三阶段（stage → commit），v1 单调用语义不再存在。
+     * 实现 best-effort：stage + commit；失败时降级返回当前会话（不抛错打断 UI）。
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun revertSession(id: String, messageID: String, directory: String? = null): SessionInfo {
+        try {
+            getJson("/api/session/$id/revert/stage") { setBody(RevertRequest(messageID = messageID)) }
+            try { client.post("/api/session/$id/revert/commit") { setBody("{}") } } catch (e: Exception) {
+                Log.w(TAG, "revert commit failed", e)
             }
-        }.body<SessionInfo>()
+        } catch (e: Exception) {
+            Log.w(TAG, "revert stage failed, treating as no-op", e)
+        }
+        return getSession(id)
+    }
 
-    /** POST /session/{id}/unrevert — redo (restore reverted messages + file snapshot) */
-    suspend fun unrevertSession(id: String, directory: String? = null): SessionInfo =
-        client.post("/session/$id/unrevert") {
-            setBody("{}")
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
-        }.body<SessionInfo>()
+    /** v2 无 unrevert 端点 —— 降级为返回当前会话 */
+    suspend fun unrevertSession(id: String, directory: String? = null): SessionInfo {
+        Log.w(TAG, "unrevert not supported by v2; returning current session")
+        return getSession(id)
+    }
 
     // ─── Messages ──────────────────────────────────────────────────────
 
     /**
-     * GET /session/{id}/message → returns array directly.
-     *
-     * Memory optimization:
-     * 1. Server-side: passes ?limit=N to only fetch recent messages (prevents huge response)
-     * 2. Client-side: caps to [MAX_MESSAGES] as safety net
-     *
-     * The OpenCode server supports ?limit=N (cursor-based pagination).
-     * Without it, ALL messages including huge tool outputs are returned → OOM.
+     * GET /api/session/{id}/message → {data, cursor}
+     * v2 消息为判别联合 → V2MessageParser 手动翻译成 v1 MessageInfo(info+parts)。
      */
+    @OptIn(ExperimentalSerializationApi::class)
     suspend fun getMessages(id: String, directory: String? = null, limit: Int? = null): List<MessageInfo> {
-        val messages = client.get("/session/$id/message") {
+        val el = getJson("/api/session/$id/message") {
             parameter("limit", limit ?: MAX_MESSAGES)
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
-        }.body<List<MessageInfo>>()
-
-        // Safety net: if server ignores limit or returns more
+        }
+        val arr = el.dataArray() ?: return emptyList()
+        val messages = arr.mapNotNull { item ->
+            try { V2MessageParser.fromJsonElement(item) }
+            catch (e: Exception) { Log.w(TAG, "Failed to parse v2 message: $item", e); null }
+        }
         return if (messages.size > MAX_MESSAGES) {
             Log.w(TAG, "Server returned ${messages.size} messages despite limit=$MAX_MESSAGES, truncating")
             messages.takeLast(MAX_MESSAGES)
@@ -245,159 +261,108 @@ class OConnectorApiClient @Inject constructor(
     }
 
     /**
-     * POST /session/{id}/prompt_async — 异步发送（HTTP 204, 立即返回）
-     * Body: {"parts":[{"type":"text","text":"user message"}],"agent":"optional"}
-     * AI 生成通过 SSE 事件流实时推送（message.part.delta, message.completed)
+     * POST /api/session/{id}/prompt（v2 PromptInput = {text, agents?, delivery?, resume?}）。
+     * v2 模型是会话级：若调用方带 providerID/modelID（v1 每消息语义），先切会话模型再发。
      */
     suspend fun sendMessage(sessionId: String, text: String, agent: String? = null, providerID: String? = null, modelID: String? = null, variant: String? = null, directory: String? = null) {
-        val modelRef = if (providerID != null || modelID != null) ModelRef(providerID, modelID) else null
-        client.post("/session/$sessionId/prompt_async") {
-            setBody(SendMessageRequest(parts = listOf(SendMessagePart(text = text)), agent = agent, model = modelRef, variant = variant))
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
+        if (modelID != null) {
+            try { switchModel(sessionId, providerID, modelID, variant) }
+            catch (e: Exception) { Log.w(TAG, "switchModel before prompt failed: ${e.message}") }
+        }
+        client.post("/api/session/$sessionId/prompt") {
+            setBody(V2PromptBody(text = text, agents = agent?.let { listOf(it) }))
         }
     }
 
-    // ─── Permission / Question Replies ──────────────────────────────────
-
-    /** POST /permission/:requestId/reply — respond to a permission.asked event */
-    suspend fun replyPermission(requestId: String, reply: String, message: String? = null, directory: String? = null) {
-        client.post("/permission/$requestId/reply") {
-            setBody(PermissionReplyPayload(reply = reply, message = message))
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
+    /** POST /api/session/{id}/agent → {agent}（需求②切代理） */
+    suspend fun switchAgent(sessionId: String, agent: String) {
+        client.post("/api/session/$sessionId/agent") {
+            setBody(V2AgentSwitchBody(agent = agent))
         }
-        Log.d(TAG, "Permission reply: $reply for request=$requestId")
+        Log.d(TAG, "Switched session $sessionId agent → $agent")
     }
 
-    /** POST /question/:requestId/reply — respond to a question.asked event */
+    /** POST /api/session/{id}/model → {model: Model.Ref}（需求③选模型后切换） */
+    suspend fun switchModel(sessionId: String, providerID: String?, modelID: String?, variant: String? = null) {
+        client.post("/api/session/$sessionId/model") {
+            setBody(V2ModelSwitchBody(model = V2ModelRef(id = modelID, providerID = providerID, variant = variant)))
+        }
+    }
+
+    // ─── Permission Replies ─────────────────────────────────────────────
+
+    /**
+     * v2: POST /api/session/{sessionID}/permission/{requestID}/reply
+     * 需要 sessionID（v1 不需要）；UI 调用时传入，null 则 no-op 避免 404。
+     */
+    suspend fun replyPermission(requestId: String, reply: String, message: String? = null, directory: String? = null, sessionId: String? = null) {
+        if (sessionId == null) {
+            Log.w(TAG, "replyPermission: sessionId missing, skipping (request=$requestId)")
+            return
+        }
+        client.post("/api/session/$sessionId/permission/$requestId/reply") {
+            setBody(V2PermissionReplyBody(reply = reply, message = message))
+        }
+        Log.d(TAG, "Permission reply: $reply for request=$requestId session=$sessionId")
+    }
+
+    /** v2 已无 /question/{id}/reply —— no-op 降级 */
     suspend fun replyQuestion(requestId: String, answers: List<List<String>>, directory: String? = null) {
-        client.post("/question/$requestId/reply") {
-            setBody(QuestionReplyPayload(answers = answers))
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
-        }
-        Log.d(TAG, "Question reply: ${answers.size} answers for request=$requestId")
+        Log.w(TAG, "replyQuestion not supported by v2 (request=$requestId)")
     }
 
-    /** POST /question/:requestId/reject — dismiss a question.asked event */
+    /** v2 已无 /question/{id}/reject —— no-op 降级 */
     suspend fun rejectQuestion(requestId: String, directory: String? = null) {
-        client.post("/question/$requestId/reject") {
-            setBody("{}")
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
-        }
-        Log.d(TAG, "Question rejected for request=$requestId")
+        Log.w(TAG, "rejectQuestion not supported by v2 (request=$requestId)")
     }
 
-    // ─── Todo ──────────────────────────────────────────────────────────
+    // ─── Todo / Status / Children（v2 已删除，优雅降级） ─────────────────
 
-    /** GET /session/{id}/todo → returns array directly */
-    suspend fun getTodoList(id: String, directory: String? = null): List<TodoItem> =
-        client.get("/session/$id/todo") {
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
-        }.body<List<TodoItem>>()
+    /** v2 无 todo 端点 → 空列表 */
+    suspend fun getTodoList(id: String, directory: String? = null): List<TodoItem> {
+        Log.d(TAG, "getTodoList: v2 has no todo endpoint, returning empty")
+        return emptyList()
+    }
 
-    // ─── Session Status ────────────────────────────────────────────────
-
-    /** GET /session/status → returns Map<String, String> (sessionID → "busy"/"idle") */
+    /** v2 无 /session/status → 空 map */
     suspend fun getSessionStatus(): Map<String, String> {
-        val statusMap = client.get("/session/status").body<Map<String, String>>()
-        Log.d(TAG, "Loaded status for ${statusMap.size} sessions")
-        return statusMap
+        Log.d(TAG, "getSessionStatus: v2 has no status endpoint, returning empty")
+        return emptyMap()
     }
 
-    /** GET /session/{id}/children → returns list of child sessions */
+    /** v2 无 children 端点 → 空列表 */
     suspend fun getSessionChildren(sessionId: String): List<SessionInfo> {
-        val children = client.get("/session/$sessionId/children").body<List<SessionInfo>>()
-        Log.d(TAG, "Loaded ${children.size} children for session=$sessionId")
-        return children
+        Log.d(TAG, "getSessionChildren: v2 has no children endpoint, returning empty")
+        return emptyList()
     }
 
     // ─── Project ───────────────────────────────────────────────────────
 
-    /** GET /project/current → flat ProjectInfo (no wrapper) */
-    suspend fun getCurrentProject(): ProjectInfo =
-        client.get("/project/current").body<ProjectInfo>()
-
-    /** GET /project → list all known projects */
-    suspend fun listProjects(): List<ProjectInfo> =
-        client.get("/project").body<List<ProjectInfo>>()
-
-    /**
-     * Fetch sessions from ALL known projects.
-     *
-     * OpenCode scopes sessions by project (determined by directory).
-     * A single server call only returns sessions for one project.
-     *
-     * Strategy:
-     *   1. GET /project → discover all known projects
-     *   2. For normal projects (real worktree): GET /session?list&directory=<worktree>
-     *   3. For global project (worktree="/"): GET /session?list&directory=/&scope=project
-     *      — scope=project skips directory matching, returns ALL sessions for that project_id
-     *   4. Merge and deduplicate all results
-     *
-     * Falls back to a single unfiltered request if project list fails.
-     */
-    suspend fun listAllSessions(): List<SessionInfo> {
-        val allSessions = mutableListOf<SessionInfo>()
-        val seenIds = mutableSetOf<String>()
-
-        try {
-            val projects = listProjects()
-            Log.d(TAG, "Discovered ${projects.size} projects: ${projects.map { "${it.id}=${it.worktree}" }}")
-
-            // Query sessions for each project in parallel
-            val results = coroutineScope {
-                projects.map { project ->
-                    async {
-                        try {
-                            val isGlobal = project.worktree == "/" || project.worktree == null
-                            if (isGlobal) {
-                                // scope=project skips directory filter, returns all sessions for this project_id
-                                listSessions(directory = project.worktree ?: "/", scope = "project")
-                            } else {
-                                listSessions(directory = project.worktree)
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to load sessions for project ${project.id} (${project.worktree}): ${e.message}")
-                            emptyList<SessionInfo>()
-                        }
-                    }
-                }.awaitAll()
-            }
-
-            for (sessions in results) {
-                for (session in sessions) {
-                    if (seenIds.add(session.id)) {
-                        allSessions.add(session)
-                    }
-                }
-            }
-
-            Log.d(TAG, "Merged ${allSessions.size} unique sessions from ${projects.size} projects")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to list projects, falling back to single query: ${e.message}")
-            return listSessions(null)
+    /** GET /api/project → 裸数组。v2 无「当前项目」概念，取第一条（服务端最近使用排序）。 */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun getCurrentProject(): ProjectInfo {
+        val arr = getJson("/api/project") {}.jsonArray
+        return if (arr.isNotEmpty()) {
+            try { json.decodeFromJsonElement(ProjectInfo.serializer(), arr.first()) }
+            catch (e: Exception) { ProjectInfo() }
+        } else {
+            ProjectInfo()
         }
-
-        return allSessions
     }
 
-    /** Test connectivity by hitting a lightweight endpoint */
+    /** GET /api/project → List<ProjectInfo> */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun listProjects(): List<ProjectInfo> {
+        val arr = getJson("/api/project") {}.jsonArray
+        return arr.mapNotNull { item ->
+            try { json.decodeFromJsonElement(ProjectInfo.serializer(), item) }
+            catch (e: Exception) { Log.w(TAG, "Failed to decode project $item", e); null }
+        }
+    }
+
+    /** 连通性：GET /api/project */
     suspend fun testConnection(): Boolean = try {
-        getCurrentProject()
+        getJson("/api/project") {}
         true
     } catch (e: Exception) {
         Log.w(TAG, "Test connection failed: ${e.javaClass.simpleName}: ${e.message}")
@@ -406,39 +371,105 @@ class OConnectorApiClient @Inject constructor(
 
     // ─── Agents ─────────────────────────────────────────────────────────
 
-    /** GET /agent → returns array of available agents */
-    suspend fun listAgents(): List<AgentInfo> =
-        client.get("/agent").body<List<AgentInfo>>()
+    /** GET /api/agent → {location, data: [Agent.Info]} */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun listAgents(): List<AgentInfo> {
+        val el = getJson("/api/agent") {}
+        return el.decodeDataList<AgentInfo>()
+    }
 
-    // ─── Files ──────────────────────────────────────────────────────────
+    // ─── Files（v2 /api/fs/*，best-effort） ─────────────────────────────
 
-    /** GET /file?path=... → returns array of file/directory nodes */
-    suspend fun listFiles(path: String, directory: String? = null): List<FileNode> =
-        client.get("/file") {
-            parameter("path", path)
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
+    /** GET /api/fs/list?path=... — v2 响应结构未完全对齐，防御式解析 */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun listFiles(path: String, directory: String? = null): List<FileNode> = try {
+        val el = getJson("/api/fs/list") { parameter("path", path) }
+        val arr = when {
+            el is JsonObject && el["data"] is JsonArray -> el["data"] as JsonArray
+            el is JsonArray -> el
+            else -> return emptyList()
+        }
+        arr.mapNotNull { item ->
+            try { json.decodeFromJsonElement(FileNode.serializer(), item) }
+            catch (e: Exception) { Log.w(TAG, "Failed to decode file node", e); null }
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "listFiles failed for $path: ${e.message}")
+        emptyList()
+    }
+
+    /** GET /api/fs/read/{path} → 文件原始内容 */
+    suspend fun readFileContent(path: String, directory: String? = null): FileContent {
+        val body = client.get("/api/fs/read/${encPath(path)}") {}.bodyAsText()
+        return FileContent(type = "text", content = body)
+    }
+
+    // ─── Config / Providers / Models（需求③核心） ────────────────────────
+
+    /** GET /api/provider → {location, data: [Provider.Info]} */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun listProvidersV2(): List<V2ProviderInfo> {
+        val el = getJson("/api/provider") {}
+        return el.decodeDataList<V2ProviderInfo>()
+    }
+
+    /** GET /api/model → {location, data: [Model.Info]} */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun listModelsV2(): List<V2ModelInfo> {
+        val el = getJson("/api/model") {}
+        return el.decodeDataList<V2ModelInfo>()
+    }
+
+    /**
+     * 需求③：读服务端 opencode.json 原始内容，解析 v1 格式 `provider.<id>.whitelist`，
+     * 得到「勾选模型 ID 集合」。
+     *
+     * 路径获取链：/api/config（返回配置文档数组，含 path）→ 找 opencode.json 文档
+     * → /api/fs/read/{path} 读原始文件（/api/config 是解析后结果，whitelist 已被 v2 丢弃，
+     * 必须读原始文件）。
+     *
+     * 返回集合元素格式：`providerID/modelID` 与裸 `modelID` 两者都放（兼容不同 provider 写法）。
+     */
+    suspend fun readModelWhitelist(): Set<String> {
+        return try {
+            val config = getJson("/api/config") {}.jsonArray
+            val docPath = config.firstNotNullOfOrNull { item ->
+                val obj = item.jsonObject
+                if (obj.string("type") == "document") {
+                    val p = obj.string("path")
+                    val base = p?.substringAfterLast('\\')?.substringAfterLast('/')
+                    // 优先 opencode.json，其次任意 .json/.jsonc
+                    if (base == "opencode.json" || base == "opencode.jsonc") p
+                    else if (base?.endsWith(".json") == true || base?.endsWith(".jsonc") == true) p
+                    else null
+                } else null
+            } ?: return emptySet()
+
+            val raw = client.get("/api/fs/read/${encPath(docPath)}") {}.bodyAsText()
+            val root = json.parseToJsonElement(raw).jsonObject
+            val providers = root["provider"]?.jsonObject ?: return emptySet()
+
+            val out = mutableSetOf<String>()
+            providers.forEach { (providerId, cfg) ->
+                val whitelist = cfg.jsonObject["whitelist"]?.jsonArray ?: return@forEach
+                whitelist.forEach { entry ->
+                    val modelId = entry.jsonPrimitive.contentOrNull ?: return@forEach
+                    out.add("$providerId/$modelId")
+                    out.add(modelId)
+                }
             }
-        }.body<List<FileNode>>()
-
-    /** GET /file/content?path=... → returns file content as FileContent */
-    suspend fun readFileContent(path: String, directory: String? = null): FileContent =
-        client.get("/file/content") {
-            parameter("path", path)
-            directory?.let {
-                parameter("directory", it)
-                header("x-opencode-directory", encDir(it))
-            }
-        }.body<FileContent>()
-
-    // ─── Config / Providers ─────────────────────────────────────────────
-
-    /** GET /provider → returns provider list with models and connected status */
-    suspend fun listProviders(): ProviderList =
-        client.get("/provider").body<ProviderList>()
+            Log.d(TAG, "Whitelist loaded: ${out.size} entries from $docPath")
+            out
+        } catch (e: Exception) {
+            Log.w(TAG, "readModelWhitelist failed (fallback: no filtering): ${e.message}")
+            emptySet()
+        }
+    }
 
     fun close() {
         try { client.close() } catch (_: Exception) {}
     }
+
+    private fun JsonObject.string(key: String): String? =
+        this[key]?.jsonPrimitive?.contentOrNull
 }
