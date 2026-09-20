@@ -2,7 +2,9 @@ package com.opencode.remote.di
 
 import android.content.Context
 import com.opencode.remote.data.api.OConnectorApiClient
+import com.opencode.remote.data.api.OConnectorApiV2Client
 import com.opencode.remote.data.api.OConnectorSseClient
+import com.opencode.remote.data.api.OConnectorSseV2Client
 import com.opencode.remote.data.datastore.MemoManager
 import com.opencode.remote.data.datastore.ServerManager
 import com.opencode.remote.data.network.NetworkMonitor
@@ -50,6 +52,16 @@ abstract class AppModule {
         @Singleton
         fun provideSseClient(json: Json): OConnectorSseClient =
             OConnectorSseClient(json)
+
+        @Provides
+        @Singleton
+        fun provideApiV2Client(json: Json): OConnectorApiV2Client =
+            OConnectorApiV2Client(json)
+
+        @Provides
+        @Singleton
+        fun provideSseV2Client(json: Json): OConnectorSseV2Client =
+            OConnectorSseV2Client(json)
 
         @Provides
         @Singleton
