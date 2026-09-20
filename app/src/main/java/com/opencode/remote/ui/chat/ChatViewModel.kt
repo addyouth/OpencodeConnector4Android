@@ -387,7 +387,12 @@ class ChatViewModel @Inject constructor(
                 val session = repository.getSession(_uiState.value.sessionId, _uiState.value.sessionDirectory)
                 val isCompleted = session.time?.completed != null && session.time.completed > 0
                 // If we don't have directory yet, store it from session info
-                val dir = _uiState.value.sessionDirectory ?: session.directory
+                val dir = _uiState.value.sessionDirectory ?: session.resolvedDirectory
+                // 需求②：进会话自动带出该会话当前主代理（v2 Session.Info.agent）
+                val sessionAgent = session.agent
+                if (!sessionAgent.isNullOrBlank()) {
+                    selectAgent(sessionAgent)
+                }
                 _uiState.update {
                     it.copy(
                         sessionMeta = it.sessionMeta.copy(
@@ -1626,7 +1631,13 @@ class ChatViewModel @Inject constructor(
         val request = _uiState.value.pendingPermission ?: return
         viewModelScope.launch {
             try {
-                repository.replyPermission(request.id, reply, message, _uiState.value.sessionDirectory)
+                repository.replyPermission(
+                    requestId = request.id,
+                    reply = reply,
+                    message = message,
+                    directory = _uiState.value.sessionDirectory,
+                    sessionId = _uiState.value.sessionId,
+                )
                 Log.d(TAG, "Permission replied: $reply for ${request.id}")
                 advancePermission()
             } catch (e: Exception) {

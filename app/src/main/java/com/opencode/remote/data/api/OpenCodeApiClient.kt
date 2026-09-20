@@ -107,7 +107,7 @@ class OConnectorApiClient @Inject constructor(
 
     @OptIn(ExperimentalSerializationApi::class)
     private suspend fun getJson(url: String, block: HttpRequestBuilder.() -> Unit = {}): JsonElement =
-        client.get(url, block).body<JsonElement>()
+        Json.parseToJsonElement(client.get(url, block).bodyAsText())
 
     @OptIn(ExperimentalSerializationApi::class)
     private fun JsonElement.dataArray(): JsonArray? = when (this) {
@@ -382,20 +382,22 @@ class OConnectorApiClient @Inject constructor(
 
     /** GET /api/fs/list?path=... — v2 响应结构未完全对齐，防御式解析 */
     @OptIn(ExperimentalSerializationApi::class)
-    suspend fun listFiles(path: String, directory: String? = null): List<FileNode> = try {
-        val el = getJson("/api/fs/list") { parameter("path", path) }
-        val arr = when {
-            el is JsonObject && el["data"] is JsonArray -> el["data"] as JsonArray
-            el is JsonArray -> el
-            else -> return emptyList()
+    suspend fun listFiles(path: String, directory: String? = null): List<FileNode> {
+        return try {
+            val el = getJson("/api/fs/list") { parameter("path", path) }
+            val arr = when {
+                el is JsonObject && el["data"] is JsonArray -> el["data"] as JsonArray
+                el is JsonArray -> el
+                else -> emptyList()
+            }
+            arr.mapNotNull { item ->
+                try { json.decodeFromJsonElement(FileNode.serializer(), item) }
+                catch (e: Exception) { Log.w(TAG, "Failed to decode file node", e); null }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "listFiles failed for $path: ${e.message}")
+            emptyList()
         }
-        arr.mapNotNull { item ->
-            try { json.decodeFromJsonElement(FileNode.serializer(), item) }
-            catch (e: Exception) { Log.w(TAG, "Failed to decode file node", e); null }
-        }
-    } catch (e: Exception) {
-        Log.w(TAG, "listFiles failed for $path: ${e.message}")
-        emptyList()
     }
 
     /** GET /api/fs/read/{path} → 文件原始内容 */

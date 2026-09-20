@@ -150,7 +150,7 @@ fun SessionsScreen(
 
                     val grouped = remember(uiState.sessions) {
                         uiState.sessions
-                            .groupBy { it.directory ?: "unknown" }
+                            .groupBy { it.resolvedDirectory ?: "unknown" }
                             .mapValues { (_, sessions) ->
                                 sessions.sortedByDescending { it.time?.updated ?: it.time?.created ?: 0L }
                             }
@@ -342,7 +342,7 @@ fun ProjectSessionsScreen(
 
     val projectSessions = remember(uiState.sessions, directory) {
         uiState.sessions
-            .filter { it.directory == directory }
+            .filter { it.resolvedDirectory == directory }
             .sortedByDescending { it.time?.updated ?: it.time?.created ?: 0L }
     }
 

@@ -142,7 +142,7 @@ class SessionsViewModel @Inject constructor(
 
     /** Get all sessions for a project directory from the unfiltered cache. */
     fun allSessionsForProject(directory: String): List<SessionInfo> =
-        allSessions.filter { it.directory == directory }
+        allSessions.filter { it.resolvedDirectory == directory }
 
     /** Check whether children for a parent need refreshing (not yet loaded). */
     fun shouldRefreshChildren(parentId: String): Boolean =
@@ -249,7 +249,9 @@ class SessionsViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isCreating = true, error = null) }
             try {
-                val response = repository.createSession(directory)
+                // 需求②：新会话默认主代理（v2 API 不传 agent 会落到 build，必须显式传）
+                val defaultAgent = defaultPrimaryAgentId()
+                val response = repository.createSession(directory, defaultAgent)
                 loadSessions()
                 _uiState.update { it.copy(isCreating = false) }
                 _creationEvents.emit(response.id)
@@ -261,6 +263,13 @@ class SessionsViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    /** 主代理 = 优先 mode==all（默认主代理），其次非 build 的 primary；都没有则交给服务端默认（build） */
+    private fun defaultPrimaryAgentId(): String? {
+        val agents = repository.getCachedAgents()
+        return agents.firstOrNull { it.mode == "all" }?.id
+            ?: agents.firstOrNull { it.mode == "primary" && it.id != "build" && it.name != "Build" }?.id
     }
 
     fun deleteSession(sessionId: String, directory: String? = null) {

@@ -4,6 +4,8 @@
 > - ✅ 实测推翻下方若干猜测（以本入口为准）：`/api/config` 返回**解析后**配置（whitelist 已被 v2 丢弃），
 >   原始 whitelist 只有 `GET /api/fs/read/{path}` 读原始 opencode.json 才有 → **需求③最终方案：
 >   客户端读服务端 opencode.json 原始内容，解析 `provider.*.whitelist` 过滤 /api/model 结果**（不依赖服务端支持）；
+>   实测链路全通：document path=`C:\Users\MY\.config\opencode\opencode.json` → fs/read 原始 1415B →
+>   4 provider 勾选模型（opencode 8/nvidia 8/zhipuai 7/agnes 1），斜杠前缀模型（nvidia/z-ai/glm-5.3-flash）匹配逻辑已验证；
 > - ✅ v2 无 `/todo`、`/children`、`/session/status`、`/question/*`（实测 404）→ 优雅降级空结果；
 > - ✅ v2 revert 为三阶段 `stage → commit`，v1 单调用语义 best-effort 降级；
 > - ✅ `GET /api/session` 一次返回**全部项目**会话（`{data, cursor}`，每条带 agent/model）→ 需求②天然满足；
@@ -16,10 +18,16 @@
 >   reasoning/text.delta→message.part.delta、reasoning/text.ended→message.part.updated、
 >   step.ended→message.completed、execution.succeeded→session.idle、execution.failed→session.error(+idle)；
 > - ✅ v2 消息判别联合 → v1 MessageInfo 手动翻译已建（V2MessageParser.kt，content[] 多态安全解析）；
-> - ✅ 数据链路完成：DTO v2 字段 + OpenCodeApiClient 全量重写（/api 前缀 + {data} 解包 + whitelist 读取）
->   + OpenCodeRepository.listProviders 改为「/api/provider + /api/model + whitelist 过滤」；
-> - ⬜ Round 2 UI（ChatViewModel.buildModelOptions 过滤消费 / buildModelOptions 已就绪、进会话默认 agent、
->   会话列表 agent/项目显示）→ 见 git log commit "Round 1"。
+> - ✅ Round 1 数据链路完成：DTO v2 字段 + OpenCodeApiClient 全量重写（/api 前缀 + {data} 解包 + whitelist 读取）
+>   + OpenCodeRepository.listProviders 改为「/api/provider + /api/model + whitelist 过滤」；CI 修复 2 处
+>   （KDoc 内 `/question/*` 嵌套注释、`val package` 关键字）后 **CI 绿**；
+> - ✅ Round 2 UI（需求②③落点）完成：
+>   - 需求③在数据层闭环（loadProviders→listProviders 已过滤，buildModelOptions 零改动）；
+>   - `loadSessionInfo`：进会话自动带出 session.agent → selectAgent（需求②核心）+ resolvedDirectory 兜底；
+>   - `SessionsViewModel.createSession`：默认主代理 = mode==all 优先 / 非 build 的 primary 其次 / 否则服务端默认；
+>   - `SessionsScreen`/`SessionsViewModel`：`it.directory` → `it.resolvedDirectory`（v2 分组靠 location）；
+>   - `replyPermission` 补 sessionId（v2 端点需 /api/session/{id}/permission/{requestID}/reply）；
+> - ⬜ 真机验证：push → Actions 出 APK → 手机安装连 4096 实测（仅剩步骤）。
 
 目标：fork OConnector，适配 opencode v2（2.0.x）server API，同时落地两个体验需求：
 - 需求②：显示所有项目，进入会话自动带出该会话主代理
