@@ -338,4 +338,25 @@ class ConnectionPreferences @Inject constructor(
             null
         }
     }
+
+    /** #14 输入历史（全局环形，\u001F 分隔，最多 50 条）。 */
+    suspend fun saveInputHistory(history: List<String>) {
+        try {
+            context.dataStore.edit { prefs ->
+                prefs[stringPreferencesKey("input_history")] = history.take(50).joinToString("\u001F")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save input history", e)
+        }
+    }
+
+    suspend fun getInputHistory(): List<String> {
+        return try {
+            context.dataStore.data.first()[stringPreferencesKey("input_history")]
+                ?.split("\u001F")?.filter { it.isNotEmpty() }?.take(50) ?: emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read input history", e)
+            emptyList()
+        }
+    }
 }

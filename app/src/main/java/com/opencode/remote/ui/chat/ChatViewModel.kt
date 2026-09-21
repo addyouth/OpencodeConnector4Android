@@ -449,10 +449,14 @@ class ChatViewModel @Inject constructor(
             try {
                 // Per-project agents: resolve current session directory so e.g. 02.写作
                 // sessions list writ-assist instead of Vault defaults.
-                val dir = try {
-                    val sid = _uiState.value.sessionId
-                    if (sid.isBlank()) null else repository.getSession(sid, null)?.directory
-                } catch (_: Exception) { null }
+                // NOTE v2 has no top-level SessionInfo.directory (lives in location.directory),
+                // so prefer state sessionDirectory, then resolvedDirectory — never bare directory.
+                val dir = _uiState.value.sessionDirectory
+                    ?: try {
+                        val sid = _uiState.value.sessionId
+                        if (sid.isBlank()) null
+                        else repository.getSession(sid, null)?.resolvedDirectory
+                    } catch (_: Exception) { null }
                 val agents = repository.listAgents(dir)
                 _uiState.update {
                     it.copy(chatDisplay = it.chatDisplay.copy(
@@ -1035,11 +1039,74 @@ class ChatViewModel @Inject constructor(
         _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(inputText = text)) }
     }
 
+    // ── #14 输入历史（上下键翻，高频输入刚需；全局环形 50 条，落盘 DataStore） ──
+    private val inputHistory = mutableListOf<String>()
+    private var historyLoaded = false
+    private var historyIndex = -1  // -1 = 当前草稿，否则为 history 下标
+    private var historyDraft = ""
+
+    private fun ensureHistoryLoaded() {
+        if (historyLoaded) return
+        historyLoaded = true
+        viewModelScope.launch {
+            try {
+                val saved = connectionPreferences.getInputHistory()
+                if (saved.isNotEmpty()) {
+                    inputHistory.clear()
+                    inputHistory.addAll(saved.take(50))
+                }
+            } catch (e: Exception) { Log.w(TAG, "load input history failed", e) }
+        }
+    }
+
+    private fun pushInputHistory(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        ensureHistoryLoaded()
+        if (inputHistory.lastOrNull() == t) { historyIndex = -1; return }
+        inputHistory.add(t)
+        while (inputHistory.size > 50) inputHistory.removeAt(0)
+        historyIndex = -1
+        viewModelScope.launch {
+            try { connectionPreferences.saveInputHistory(inputHistory.toList()) }
+            catch (e: Exception) { Log.w(TAG, "save input history failed", e) }
+        }
+    }
+
+    /** 上一条（delta=-1）/下一条（delta=+1）；返回是否消费了按键。 */
+    fun navigateHistory(delta: Int): Boolean {
+        ensureHistoryLoaded()
+        if (inputHistory.isEmpty()) return false
+        if (delta < 0) {
+            if (historyIndex == -1) {
+                historyDraft = _uiState.value.inputText
+                historyIndex = inputHistory.lastIndex
+            } else if (historyIndex > 0) {
+                historyIndex--
+            } else return false
+        } else {
+            if (historyIndex == -1) return false
+            if (historyIndex < inputHistory.lastIndex) {
+                historyIndex++
+            } else {
+                historyIndex = -1
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(inputText = historyDraft)) }
+                return true
+            }
+        }
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(inputText = inputHistory[historyIndex])) }
+        return true
+    }
+
+    fun historyPrev(): Boolean = navigateHistory(-1)
+    fun historyNext(): Boolean = navigateHistory(1)
+
     fun sendMessage() {
         val text = _uiState.value.inputText.trim()
         if (text.isEmpty()) return
         // Allow sending during recoveryPending — user is resuming an interrupted conversation
         if (_uiState.value.isBlocked && !_uiState.value.recoveryPending) return
+        pushInputHistory(text)
 
         val state = _uiState.value
 

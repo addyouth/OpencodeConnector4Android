@@ -350,6 +350,8 @@ fun ChatScreen(
                             selectedModel = uiState.selectedModel,
                             onOpenSettings = viewModel::openSelectionDialog,
                             contextUsageK = uiState.contextUsageK,
+                            onHistoryPrev = { viewModel.historyPrev() },
+                            onHistoryNext = { viewModel.historyNext() },
                             onScrollToBottom = {
                                 shouldAutoScroll = true
                                 coroutineScope.launch {

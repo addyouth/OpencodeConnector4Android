@@ -10,6 +10,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
@@ -40,6 +42,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -55,6 +58,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,6 +74,7 @@ import com.opencode.remote.data.api.dto.MessageInfo
 import com.opencode.remote.data.api.dto.MessagePart
 import com.opencode.remote.data.api.dto.ModelInfo
 import com.opencode.remote.ui.strings.AppLocale
+import android.widget.Toast
 import kotlinx.coroutines.delay
 
 // ─── Message Segment Parsing ─────────────────────────────────────────────
@@ -98,12 +110,27 @@ internal fun parseMessageSegments(message: MessageInfo): List<ResponseSegment> {
 
 // ─── User Message Item ────────────────────────────────────────────────────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun UserMessageItem(message: MessageInfo) {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val copiedLabel = AppLocale.strings.copied
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.primaryContainer,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().combinedClickable(
+            onClick = {},
+            onLongClick = {
+                val raw = message.parts
+                    .filter { it.type == "text" && !it.text.isNullOrBlank() }
+                    .joinToString("\n") { it.text!! }
+                if (raw.isNotEmpty()) {
+                    clipboard.setText(AnnotatedString(raw))
+                    Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
+                }
+            },
+        ),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             val s = AppLocale.strings
@@ -367,6 +394,8 @@ internal fun ChatInputBar(
     onOpenSettings: () -> Unit,
     contextUsageK: String,
     onScrollToBottom: () -> Unit = {},
+    onHistoryPrev: () -> Boolean = { false },
+    onHistoryNext: () -> Boolean = { false },
 ) {
     val s = AppLocale.strings
 
@@ -491,9 +520,44 @@ internal fun ChatInputBar(
                     value = inputText,
                     onValueChange = onInputChange,
                     placeholder = { Text(s.inputPlaceholder) },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .onPreviewKeyEvent { e ->
+                            if (e.type != KeyEventType.KeyDown) false
+                            else when (e.key) {
+                                // #14 输入历史：硬键盘上下键翻历史
+                                Key.DirectionUp -> onHistoryPrev()
+                                Key.DirectionDown -> onHistoryNext()
+                                else -> false
+                            }
+                        },
                     maxLines = 4,
                     shape = RoundedCornerShape(24.dp),
+                    trailingIcon = {
+                        // #14 软键盘没有方向键：可点的上下键
+                        Row {
+                            IconButton(
+                                onClick = { onHistoryPrev() },
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ExpandLess,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            IconButton(
+                                onClick = { onHistoryNext() },
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ExpandMore,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
+                    },
                 )
 
                 FilledIconButton(

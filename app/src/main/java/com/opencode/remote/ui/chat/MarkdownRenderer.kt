@@ -1,24 +1,42 @@
 package com.opencode.remote.ui.chat
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -26,6 +44,9 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
+import com.opencode.remote.ui.strings.AppLocale
+import kotlinx.coroutines.delay
 
 // ─── Markdown Data Model ──────────────────────────────────────────────────
 
@@ -105,8 +126,23 @@ internal fun parseInlineSpans(text: String): List<MdSpan> {
     return spans
 }
 
+// ─── Raw text（长按复制原始段用，还原 markdown 写法） ───────────────────────
+
+internal fun MdSpan.rawText(): String = when (this) {
+    is MdSpan.Bold -> "**$text**"
+    is MdSpan.Italic -> "*$text*"
+    is MdSpan.InlineCode -> "`$text`"
+    is MdSpan.Plain -> text
+}
+
+internal fun MdSegment.rawText(): String = when (this) {
+    is MdSegment.CodeBlock -> "```$language\n$code\n```"
+    is MdSegment.Paragraph -> spans.joinToString("") { it.rawText() }
+}
+
 // ─── Markdown Text Composable ─────────────────────────────────────────────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun MarkdownText(
     text: String,
@@ -115,10 +151,23 @@ internal fun MarkdownText(
 ) {
     val codeBackground = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
     val segments = remember(text) { parseMarkdown(text) }
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val copiedLabel = AppLocale.strings.copied
+    fun copyRaw(raw: String) {
+        clipboard.setText(AnnotatedString(raw))
+        Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
+    }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         segments.forEach { segment ->
-            when (segment) {
+            // 长按复制原始段（与框内手动选取共存：按中文字触发复制，按住拖动仍可选取）
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(onClick = {}, onLongClick = { copyRaw(segment.rawText()) }),
+            ) {
+                when (segment) {
                 is MdSegment.CodeBlock -> {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
@@ -126,15 +175,39 @@ internal fun MarkdownText(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Column(modifier = Modifier.padding(8.dp)) {
-                            if (segment.language.isNotEmpty()) {
-                                Text(
-                                    text = segment.language,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                    fontFamily = FontFamily.Monospace,
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (segment.language.isNotEmpty()) {
+                                    Text(
+                                        text = segment.language,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                        fontFamily = FontFamily.Monospace,
+                                    )
+                                }
+                                Spacer(Modifier.weight(1f))
+                                // 代码块一键复制
+                                var copied by remember { mutableStateOf(false) }
+                                if (copied) {
+                                    LaunchedEffect(Unit) { delay(1200); copied = false }
+                                }
+                                IconButton(
+                                    onClick = {
+                                        clipboard.setText(AnnotatedString(segment.code))
+                                        copied = true
+                                    },
+                                    modifier = Modifier.size(28.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
                             }
+                            Spacer(modifier = Modifier.height(2.dp))
                             Box(
                                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                             ) {
@@ -179,6 +252,7 @@ internal fun MarkdownText(
                             color = color,
                         )
                     }
+                }
                 }
             }
         }

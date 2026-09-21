@@ -266,6 +266,7 @@ data class AppStrings(
     val selectionConfigure: String,
     val selectionConfirm: String,
     val selectionCancel: String,
+    val copied: String,
 )
 
 // ─── English ───────────────────────────────────────────────────────
@@ -516,6 +517,7 @@ val enStrings = AppStrings(
     selectionConfigure = "Configure",
     selectionConfirm = "Confirm",
     selectionCancel = "Cancel",
+    copied = "Copied",
 )
 
 // ─── Chinese ───────────────────────────────────────────────────────
@@ -766,4 +768,5 @@ val zhStrings = AppStrings(
     selectionConfigure = "配置",
     selectionConfirm = "确认",
     selectionCancel = "取消",
+    copied = "已复制",
 )
