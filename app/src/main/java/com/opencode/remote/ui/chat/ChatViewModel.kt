@@ -1375,6 +1375,52 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /** agent 详情弹窗（description/mode/默认模型）。 */
+    fun openAgentDetail() {
+        val name = _uiState.value.selection.draft.agent
+            ?: _uiState.value.selection.committed.agent
+            ?: _uiState.value.selection.resolvedDefaultAgent
+            ?: return
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showAgentDetail = true, isLoadingAgentDetail = true, agentDetail = null)) }
+        viewModelScope.launch {
+            try {
+                val detail = repository.getAgentDetail(name, _uiState.value.sessionDirectory)
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(agentDetail = detail, isLoadingAgentDetail = false)) }
+            } catch (e: Exception) {
+                Log.w(TAG, "agent detail failed", e)
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(isLoadingAgentDetail = false)) }
+            }
+        }
+    }
+
+    fun closeAgentDetail() {
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showAgentDetail = false)) }
+    }
+
+    /** vcs 状态（慢接口，后台刷；面板打开/切目录时各刷一次）。 */
+    fun loadVcsStatus() {
+        val dir = _uiState.value.sessionDirectory ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(isLoadingVcs = true)) }
+            try {
+                val files = repository.getVcsStatus(dir)
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(vcsFiles = files, isLoadingVcs = false)) }
+            } catch (e: Exception) {
+                Log.w(TAG, "vcs status failed", e)
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(isLoadingVcs = false)) }
+            }
+        }
+    }
+
+    fun openVcsDialog() {
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showVcsDialog = true)) }
+        if (_uiState.value.vcsFiles.isEmpty() && !_uiState.value.isLoadingVcs) loadVcsStatus()
+    }
+
+    fun closeVcsDialog() {
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showVcsDialog = false)) }
+    }
+
     fun abortSession() {        viewModelScope.launch {
             try {
                 repository.abortSession(_uiState.value.sessionId, _uiState.value.sessionDirectory)
@@ -1506,6 +1552,8 @@ class ChatViewModel @Inject constructor(
         if (_uiState.value.panelFiles.isEmpty()) {
             navigateToDirectory(".")
         }
+        // 面板打开顺带刷 vcs（一目录一次，65s 超时，后台跑）
+        loadVcsStatus()
     }
 
     fun setPanelOpen(open: Boolean) {
@@ -1514,6 +1562,7 @@ class ChatViewModel @Inject constructor(
             if (_uiState.value.panelFiles.isEmpty()) {
                 navigateToDirectory(".")
             }
+            loadVcsStatus()
             if (_uiState.value.availableModels.isEmpty()) {
                 loadModels()
             }

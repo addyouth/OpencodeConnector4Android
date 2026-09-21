@@ -29,6 +29,8 @@ fun RightPanel(
     expandedFileContent: String? = null,
     isLoadingFileContent: Boolean = false,
     onToggleFilePreview: ((FileNode) -> Unit)? = null,
+    vcsText: String? = null,
+    onVcsClick: (() -> Unit)? = null,
 ) {
     Surface(
         modifier = modifier
@@ -53,6 +55,25 @@ fun RightPanel(
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 )
+            }
+
+            // VCS status row (tap → dialog; null = not loaded yet)
+            if (vcsText != null && onVcsClick != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    onClick = onVcsClick,
+                ) {
+                    Text(
+                        text = vcsText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
             }
 
             // FileTreeView — fills remaining space

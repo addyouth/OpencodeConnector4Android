@@ -122,10 +122,12 @@ class OConnectorApiClient @Inject constructor(
     private suspend fun getJson(
         url: String,
         expectSuccess: Boolean = false,
+        timeoutMs: Long? = null,
         block: HttpRequestBuilder.() -> Unit = {},
     ): JsonElement {
         val resp = client.get(fullUrl(url)) {
             this.expectSuccess = expectSuccess
+            timeoutMs?.let { timeout { requestTimeoutMillis = it } }
             block()
         }
         return Json.parseToJsonElement(resp.bodyAsText())
@@ -661,6 +663,38 @@ class OConnectorApiClient @Inject constructor(
             if (!directory.isNullOrEmpty()) parameter("location[directory]", directory)
         }
         return el.decodeDataList<AgentInfo>()
+    }
+
+    /** GET /api/agent/{id} → 指定 agent 详情（description/mode/默认模型展示用）。 */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun getAgentDetail(agentId: String, directory: String? = null): AgentInfo? {
+        return try {
+            val el = getJson("/api/agent/$agentId") {
+                if (!directory.isNullOrEmpty()) parameter("location[directory]", directory)
+            }
+            json.decodeFromJsonElement(AgentInfo.serializer(), el.jsonObject["data"] ?: el)
+        } catch (e: Exception) {
+            Log.w(TAG, "getAgentDetail failed: ${e.message}")
+            null
+        }
+    }
+
+    /** GET /api/vcs/status → 工作区变更（常态数百条还慢，65s 超时；取消靠调用方）。 */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun getVcsStatus(directory: String): List<FileDiffInfo> {
+        return try {
+            val el = getJson("/api/vcs/status", timeoutMs = 65_000) {
+                parameter("location[directory]", directory)
+            }
+            val arr = el.dataArray() ?: return emptyList()
+            arr.mapNotNull { item ->
+                try { json.decodeFromJsonElement(FileDiffInfo.serializer(), item) }
+                catch (e: Exception) { Log.w(TAG, "Bad vcs item: ${e.message}"); null }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "getVcsStatus failed: ${e.message}")
+            emptyList()
+        }
     }
 
     // ─── Files（v2 /api/fs/*，best-effort） ─────────────────────────────

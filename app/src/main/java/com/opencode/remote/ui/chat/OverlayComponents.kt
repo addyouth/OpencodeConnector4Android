@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -41,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -206,6 +208,58 @@ private fun <T> SelectionDropdownRow(
 // ─── Chat Selection Config Dialog ────────────────────────────────────────
 
 @Composable
+internal fun AgentDetailDialog(
+    agentName: String,
+    mode: String?,
+    description: String?,
+    defaultModel: String?,
+    isLoading: Boolean,
+    closeText: String,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(agentName) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (isLoading) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    }
+                } else {
+                    if (!mode.isNullOrBlank()) {
+                        Text(
+                            text = mode,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (!description.isNullOrBlank()) {
+                        Text(
+                            text = description,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    if (!defaultModel.isNullOrBlank()) {
+                        Text(
+                            text = defaultModel,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(closeText) }
+        },
+    )
+}
+
+@Composable
 internal fun ChatSelectionConfigDialog(
     selection: ChatSelectionUiState,
     onDismiss: () -> Unit,
@@ -213,6 +267,7 @@ internal fun ChatSelectionConfigDialog(
     onAgentSelected: (String?) -> Unit,
     onModelSelected: (ModelSelectionRef?) -> Unit,
     onVariantSelected: (String?) -> Unit,
+    onAgentInfo: () -> Unit = {},
 ) {
     val s = AppLocale.strings
 
@@ -235,6 +290,17 @@ internal fun ChatSelectionConfigDialog(
                         }
                     },
                 )
+
+                // Agent 详情入口（零新字符串：按钮文案即 agent 名）
+                val detailAgentName = selection.draft.agent
+                    ?: selection.committed.agent
+                    ?: selection.resolvedDefaultAgent
+                if (detailAgentName != null) {
+                    TextButton(
+                        onClick = onAgentInfo,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(detailAgentName) }
+                }
 
                 // Model dropdown (two-line items)
                 SelectionDropdownRow(

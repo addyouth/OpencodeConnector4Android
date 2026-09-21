@@ -113,6 +113,10 @@ interface OConnectorRepository {
     suspend fun moveSession(sessionId: String, directory: String)
     suspend fun getSessionDiff(sessionId: String, from: String? = null, to: String? = null): List<FileDiffInfo>
 
+    /** agent 详情 / vcs 状态 */
+    suspend fun getAgentDetail(agentId: String, directory: String? = null): AgentInfo?
+    suspend fun getVcsStatus(directory: String): List<FileDiffInfo>
+
     /** shell 直调（跳过 AI）：发命令轮询取输出 */
     suspend fun runShell(sessionId: String, command: String): ShellResult
 
@@ -577,6 +581,12 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     override suspend fun getSessionDiff(sessionId: String, from: String?, to: String?): List<FileDiffInfo> =
         requireClient().getSessionDiff(sessionId, from, to)
+
+    override suspend fun getAgentDetail(agentId: String, directory: String?): AgentInfo? =
+        requireClient().getAgentDetail(agentId, directory)
+
+    override suspend fun getVcsStatus(directory: String): List<FileDiffInfo> =
+        requireClient().getVcsStatus(directory)
 
     override suspend fun runShell(sessionId: String, command: String): ShellResult =
         requireClient().runShell(sessionId, command)

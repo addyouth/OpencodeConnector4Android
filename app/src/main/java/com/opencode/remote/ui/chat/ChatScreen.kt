@@ -548,6 +548,9 @@ fun ChatScreen(
                     expandedFileContent = uiState.expandedFileContent,
                     isLoadingFileContent = uiState.isLoadingFileContent,
                     onToggleFilePreview = viewModel::toggleFilePreview,
+                    vcsText = if (uiState.chatDisplay.isLoadingVcs) "…"
+                        else uiState.chatDisplay.vcsFiles.size.let { if (it > 0) "● $it" else "○" },
+                    onVcsClick = viewModel::openVcsDialog,
                 )
             }
         }
@@ -561,6 +564,37 @@ fun ChatScreen(
                 onAgentSelected = viewModel::updateDraftAgent,
                 onModelSelected = viewModel::updateDraftModel,
                 onVariantSelected = viewModel::updateDraftVariant,
+                onAgentInfo = viewModel::openAgentDetail,
+            )
+        }
+
+        // Agent detail dialog
+        if (uiState.chatDisplay.showAgentDetail) {
+            val detail = uiState.chatDisplay.agentDetail
+            AgentDetailDialog(
+                agentName = detail?.name?.ifEmpty { null }
+                    ?: uiState.selection.draft.agent
+                    ?: uiState.selection.committed.agent
+                    ?: uiState.selection.resolvedDefaultAgent
+                    ?: "",
+                mode = detail?.mode,
+                description = detail?.description,
+                defaultModel = detail?.model?.modelID,
+                isLoading = uiState.chatDisplay.isLoadingAgentDetail,
+                closeText = s.close,
+                onDismiss = viewModel::closeAgentDetail,
+            )
+        }
+
+        // VCS dialog (reuse diff viewer: same FileDiffInfo shape)
+        if (uiState.chatDisplay.showVcsDialog) {
+            DiffDialog(
+                title = s.diffTitle,
+                files = uiState.chatDisplay.vcsFiles,
+                isLoading = uiState.chatDisplay.isLoadingVcs,
+                closeText = s.close,
+                emptyText = s.diffEmpty,
+                onDismiss = viewModel::closeVcsDialog,
             )
         }
 
