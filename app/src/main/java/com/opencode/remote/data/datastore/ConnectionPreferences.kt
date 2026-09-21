@@ -11,6 +11,9 @@ import androidx.security.crypto.MasterKey
 import com.opencode.remote.data.api.dto.ServerInfo
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -359,4 +362,38 @@ class ConnectionPreferences @Inject constructor(
             emptyList()
         }
     }
+
+    /** P2 离线队列：断网时存草稿（带当时选定的 agent/model），重连自动发出，上限 20 条。 */
+    suspend fun saveOutbox(items: List<OfflineQueuedMessage>) {
+        try {
+            val encoded = json.encodeToString(ListSerializer(OfflineQueuedMessage.serializer()), items.take(20))
+            context.dataStore.edit { prefs -> prefs[stringPreferencesKey("outbox")] = encoded }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save outbox", e)
+        }
+    }
+
+    suspend fun getOutbox(): List<OfflineQueuedMessage> {
+        return try {
+            val raw = context.dataStore.data.first()[stringPreferencesKey("outbox")] ?: return emptyList()
+            json.decodeFromString(ListSerializer(OfflineQueuedMessage.serializer()), raw)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read outbox", e)
+            emptyList()
+        }
+    }
+
+    private val json = Json { ignoreUnknownKeys = true }
 }
+
+/** P2 离线草稿条目（与发送时选定一致，重连后原样发出）。 */
+@Serializable
+data class OfflineQueuedMessage(
+    val sessionId: String,
+    val text: String,
+    val agent: String? = null,
+    val providerId: String? = null,
+    val modelId: String? = null,
+    val variant: String? = null,
+    val ts: Long = 0L,
+)

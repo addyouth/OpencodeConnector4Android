@@ -12,8 +12,15 @@ import com.opencode.remote.service.SseForegroundService
 import com.opencode.remote.ui.chat.ResponseSegment
 import com.opencode.remote.ui.chat.PermissionRequestData
 import com.opencode.remote.ui.chat.QuestionRequestData
+import com.opencode.remote.data.datastore.ConnectionPreferences
+import com.opencode.remote.data.datastore.OfflineQueuedMessage
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -73,6 +80,11 @@ interface OConnectorRepository {
     suspend fun replyPermission(requestId: String, reply: String, message: String? = null, directory: String? = null, sessionId: String? = null)
     /** v2 #8 轮询挂起的权限确认（无 permission SSE 事件，桌面端同样轮询）。 */
     suspend fun pollPermissions(sessionId: String): List<PermissionRequestData>
+
+    /** P2 离线队列：电梯/断流时存草稿，重连自动发出（带发送时选定的 agent/model）。 */
+    suspend fun enqueueOffline(item: OfflineQueuedMessage)
+    suspend fun flushOutbox(): Int
+    fun isOnline(): Boolean
     suspend fun replyQuestion(requestId: String, answers: List<List<String>>, directory: String? = null)
     suspend fun rejectQuestion(requestId: String, directory: String? = null)
 
@@ -164,11 +176,15 @@ class OConnectorRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
     private val json: Json,
     private val networkMonitor: NetworkMonitor,
+    private val connectionPreferences: ConnectionPreferences,
 ) : OConnectorRepository {
 
     companion object {
         private const val TAG = "OConnectorRepository"
     }
+
+    /** P2：重连回调里的 flush 用（短任务，单例常驻）。 */
+    private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val connectionGeneration = java.util.concurrent.atomic.AtomicLong(0)
     override val currentGeneration: Long get() = connectionGeneration.get()
@@ -353,9 +369,63 @@ class OConnectorRepositoryImpl @Inject constructor(
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to restart SSE foreground service", e)
                 }
+                // P2 离线队列：重连后把草稿按序发出
+                repoScope.launch {
+                    try {
+                        val sent = flushOutbox()
+                        if (sent > 0) {
+                            withContext(Dispatchers.Main) {
+                                try {
+                                    android.widget.Toast.makeText(
+                                        context, "已发出${sent}条离线草稿", android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    } catch (e: Exception) { Log.w(TAG, "flushOutbox on reconnect failed", e) }
+                }
             }
         }
         networkMonitor.start()
+    }
+
+    override fun isOnline(): Boolean = try {
+        networkMonitor.isConnected.value
+    } catch (e: Exception) { true }
+
+    override suspend fun enqueueOffline(item: OfflineQueuedMessage) {
+        try {
+            val cur = connectionPreferences.getOutbox().toMutableList()
+            cur.add(item)
+            connectionPreferences.saveOutbox(cur.takeLast(20))
+            Log.d(TAG, "Offline queued for session=${item.sessionId}")
+        } catch (e: Exception) { Log.w(TAG, "enqueueOffline failed", e) }
+    }
+
+    override suspend fun flushOutbox(): Int {
+        val items = try { connectionPreferences.getOutbox() } catch (e: Exception) { emptyList() }
+        if (items.isEmpty()) return 0
+        var sent = 0
+        val failed = mutableListOf<OfflineQueuedMessage>()
+        for (item in items) {
+            try {
+                requireClient().sendMessage(
+                    sessionId = item.sessionId,
+                    text = item.text,
+                    agent = item.agent,
+                    providerID = item.providerId,
+                    modelID = item.modelId,
+                    variant = item.variant,
+                )
+                sent++
+            } catch (e: Exception) {
+                Log.w(TAG, "flushOutbox send failed, keeping: ${e.message}")
+                failed.add(item)
+            }
+        }
+        try { connectionPreferences.saveOutbox(failed) } catch (e: Exception) { Log.w(TAG, "flushOutbox save failed", e) }
+        Log.d(TAG, "flushOutbox: sent=$sent kept=${failed.size}")
+        return sent
     }
 
     /**

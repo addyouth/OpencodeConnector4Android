@@ -1,9 +1,33 @@
 package com.opencode.remote
 
+import android.app.Activity
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.os.Bundle
 import dagger.hilt.android.HiltAndroidApp
+
+/** P2：应用前后台追踪——前台时完成/确认通知免打扰（聊天的气泡已可见），后台才响铃震动。 */
+object AppForegroundTracker {
+    @Volatile
+    var isForeground = false
+        private set
+    private var startedCount = 0
+
+    fun onActivityStarted() {
+        synchronized(this) {
+            startedCount++
+            isForeground = true
+        }
+    }
+
+    fun onActivityStopped() {
+        synchronized(this) {
+            startedCount = maxOf(0, startedCount - 1)
+            if (startedCount == 0) isForeground = false
+        }
+    }
+}
 
 @HiltAndroidApp
 class OConnectorApp : Application() {
@@ -11,6 +35,15 @@ class OConnectorApp : Application() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityStarted(activity: Activity) = AppForegroundTracker.onActivityStarted()
+            override fun onActivityStopped(activity: Activity) = AppForegroundTracker.onActivityStopped()
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityResumed(activity: Activity) {}
+            override fun onActivityPaused(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+        })
     }
 
     private fun createNotificationChannel() {

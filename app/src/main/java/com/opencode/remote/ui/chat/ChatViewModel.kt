@@ -2,13 +2,20 @@ package com.opencode.remote.ui.chat
 
 import android.app.NotificationManager
 import android.content.Context
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
+import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.opencode.remote.AppForegroundTracker
 import com.opencode.remote.OConnectorApp
 import com.opencode.remote.R
 import com.opencode.remote.data.api.dto.*
 import com.opencode.remote.data.datastore.ConnectionPreferences
+import com.opencode.remote.data.datastore.OfflineQueuedMessage
 import com.opencode.remote.data.datastore.StoredModelSelection
 import com.opencode.remote.data.repository.OConnectorRepository
 import com.opencode.remote.data.sse.SseEventBus
@@ -1106,6 +1113,28 @@ class ChatViewModel @Inject constructor(
         if (text.isEmpty()) return
         // Allow sending during recoveryPending — user is resuming an interrupted conversation
         if (_uiState.value.isBlocked && !_uiState.value.recoveryPending) return
+        // P2 离线队列：无网时存草稿（带当前选定），重连自动发出
+        if (!repository.isOnline()) {
+            val sel = _uiState.value.selection.committed
+            viewModelScope.launch {
+                try {
+                    repository.enqueueOffline(
+                        OfflineQueuedMessage(
+                            sessionId = _uiState.value.sessionId,
+                            text = text,
+                            agent = sel.agent,
+                            providerId = sel.model?.providerId,
+                            modelId = sel.model?.modelId,
+                            variant = sel.variant,
+                            ts = System.currentTimeMillis(),
+                        )
+                    )
+                } catch (e: Exception) { Log.w(TAG, "enqueue failed", e) }
+            }
+            try { Toast.makeText(appContext, "网络断开，已存草稿，重连自动发送", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+            _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(inputText = "")) }
+            return
+        }
         pushInputHistory(text)
 
         val state = _uiState.value
@@ -1832,6 +1861,8 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun showPermissionNotification(req: PermissionRequestData) {
+        // P2：前台时气泡已可见，不再打扰
+        if (AppForegroundTracker.isForeground) return
         try {
             val nm = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             val n = android.app.Notification.Builder(appContext, OConnectorApp.CHANNEL_ID_COMPLETION)
@@ -1841,7 +1872,21 @@ class ChatViewModel @Inject constructor(
                 .setAutoCancel(true)
                 .build()
             nm.notify(PERMISSION_NOTIFICATION_ID, n)
+            buzzOnce()
         } catch (e: Exception) { Log.w(TAG, "permission notify failed", e) }
+    }
+
+    /** P2：短震动（完成/确认提醒）。 */
+    private fun buzzOnce() {
+        try {
+            val vib: Vibrator? = if (Build.VERSION.SDK_INT >= 31) {
+                appContext.getSystemService(VibratorManager::class.java)?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                appContext.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
+            vib?.vibrate(VibrationEffect.createOneShot(300, VibrationEffect.DEFAULT_AMPLITUDE))
+        } catch (e: Exception) { Log.w(TAG, "buzz failed", e) }
     }
 
     /** Advance to the next queued permission, or clear blocked state if queue is empty. */    private fun advancePermission() {

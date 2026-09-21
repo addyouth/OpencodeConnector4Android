@@ -119,6 +119,8 @@ class SseForegroundService : Service() {
     }
 
     private fun showTurnCompletedNotification(sessionId: String, directory: String?, title: String?) {
+        // P2：前台时用户正看着，不打扰
+        if (com.opencode.remote.AppForegroundTracker.isForeground) return
         val strings = com.opencode.remote.ui.strings.AppLocale.strings
         val displayName = title
             ?: directory
@@ -147,6 +149,16 @@ class SseForegroundService : Service() {
 
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(completionNotificationId(sessionId), notification)
+        // P2：跑完震动，不用一直盯着
+        try {
+            val vib: android.os.Vibrator? = if (android.os.Build.VERSION.SDK_INT >= 31) {
+                getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator
+            }
+            vib?.vibrate(android.os.VibrationEffect.createOneShot(300, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+        } catch (e: Exception) { Log.w(TAG, "buzz failed: ${e.message}") }
         Log.d(TAG, "Turn completed notification sent: session=$sessionId dir=$directory title=$title")
     }
 
