@@ -112,8 +112,17 @@ class OConnectorApiClient @Inject constructor(
         URLEncoder.encode(path, "UTF-8").replace("+", "%20")
 
     @OptIn(ExperimentalSerializationApi::class)
-    private suspend fun getJson(url: String, block: HttpRequestBuilder.() -> Unit = {}): JsonElement =
-        Json.parseToJsonElement(client.get(fullUrl(url), block).bodyAsText())
+    private suspend fun getJson(
+        url: String,
+        expectSuccess: Boolean = false,
+        block: HttpRequestBuilder.() -> Unit = {},
+    ): JsonElement {
+        val resp = client.get(fullUrl(url)) {
+            this.expectSuccess = expectSuccess
+            block()
+        }
+        return Json.parseToJsonElement(resp.bodyAsText())
+    }
 
     /** 相对路径拼完整 URL（A 方案根治：configure 丢 baseUrl 的回归 bug）。 */
     private fun fullUrl(path: String): String = baseUrl.trimEnd('/') + path
@@ -168,6 +177,10 @@ class OConnectorApiClient @Inject constructor(
     /** v2: 单次 GET /api/session 即返回全部项目会话 → 直接复用 listSessions */
     suspend fun listAllSessions(): List<SessionInfo> = listSessions(null, null)
 
+    /** 最近一次 createSession 失败的真实原因（成功时为 null；建会话不再静默丢错）。 */
+    var lastCreateError: String? = null
+        private set
+
     /** POST /api/session → {data: Session.Info}。显式传 agent（需求②默认主代理） */
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun createSession(directory: String? = null, agent: String? = null): CreateSessionResponse {
@@ -176,12 +189,20 @@ class OConnectorApiClient @Inject constructor(
             agent = agent,
             location = directory?.let { V2LocationRef.of(it) },
         )
-        val el = getJson("/api/session") { setBody(body) }
+        val el = try {
+            getJson("/api/session", expectSuccess = true) { setBody(body) }
+        } catch (e: Exception) {
+            lastCreateError = "POST /api/session: ${e.javaClass.simpleName}: ${e.message}"
+            Log.w(TAG, "createSession HTTP failed: $lastCreateError")
+            throw e
+        }
         return try {
+            lastCreateError = null
             CreateSessionResponse.fromSession(
                 json.decodeFromJsonElement(SessionInfo.serializer(), el.jsonObject["data"] ?: el)
             )
         } catch (e: Exception) {
+            lastCreateError = "decode: ${e.javaClass.simpleName}: ${e.message} payload=${el.toString().take(200)}"
             Log.w(TAG, "createSession: odd response $el", e)
             CreateSessionResponse()
         }

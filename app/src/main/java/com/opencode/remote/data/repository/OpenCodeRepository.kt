@@ -111,6 +111,8 @@ interface OConnectorRepository {
 
     /** 最近一次 testConnection 失败的真实原因（成功时为 null）。 */
     fun getLastTestError(): String?
+    /** 最近一次 createSession 失败的真实原因（成功时为 null）。 */
+    fun getLastCreateError(): String?
 
     // ─── Agents ─────────────────────────────────────────────────────────
 
@@ -545,6 +547,9 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     override fun getLastTestError(): String? =
         try { apiClient.lastTestError } catch (_: Exception) { null }
+
+    override fun getLastCreateError(): String? =
+        try { apiClient.lastCreateError } catch (_: Exception) { null }
 
     // ─── Agents ─────────────────────────────────────────────────────────
 

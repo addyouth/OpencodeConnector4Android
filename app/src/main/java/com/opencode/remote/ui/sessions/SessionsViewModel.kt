@@ -253,15 +253,21 @@ class SessionsViewModel @Inject constructor(
                 val defaultAgent = defaultPrimaryAgentId()
                 val response = repository.createSession(directory, defaultAgent)
                 // 空 id 直接抛：否则跳进幽灵会话（发也白发，重进空白）
-                if (response.id.isBlank()) throw IllegalStateException("server returned empty session id")
+                if (response.id.isBlank()) {
+                    val detail = try { repository.getLastCreateError() } catch (_: Exception) { null }
+                    throw IllegalStateException(detail ?: "server returned empty session id")
+                }
                 loadSessions()
                 _uiState.update { it.copy(isCreating = false) }
                 _creationEvents.emit(response.id)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to create session", e)
                 val s = com.opencode.remote.ui.strings.AppLocale.strings
+                val detail = try { repository.getLastCreateError() } catch (_: Exception) { null }
+                val msg = if (detail != null) "${e.localizedMessage ?: e.javaClass.simpleName} ($detail)"
+                    else (e.localizedMessage ?: e.javaClass.simpleName)
                 _uiState.update {
-                    it.copy(isCreating = false, error = s.errCreateSession.replace("%s", e.localizedMessage ?: e.javaClass.simpleName))
+                    it.copy(isCreating = false, error = s.errCreateSession.replace("%s", msg))
                 }
             }
         }
