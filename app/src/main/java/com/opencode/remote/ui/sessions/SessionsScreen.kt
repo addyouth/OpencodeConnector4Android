@@ -400,6 +400,13 @@ fun ProjectSessionsScreen(
                                     contentDescription = if (uiState.listDensity == ListDensity.COMPACT) s.densityDefault else s.densityCompact,
                                 )
                             }
+                            // 第二新建入口（与 FAB 同函数）：分开 FAB 专属问题还是全局问题
+                            IconButton(onClick = {
+                                viewModel.debugTap()
+                                viewModel.createSession(directory)
+                            }) {
+                                Icon(Icons.Default.Add, contentDescription = null)
+                            }
                             IconButton(onClick = { viewModel.loadSessions() }) {
                                 Icon(Icons.Default.Refresh, contentDescription = s.refresh)
                             }
@@ -530,7 +537,8 @@ fun ProjectSessionsScreen(
                                     }
                                 } else {
                                     LazyColumn(
-                                        contentPadding = PaddingValues(horizontal = 16.dp),
+                                        // 底部留白 88dp：末卡片不再叠进 FAB 区，误触顶部卡片类彻底排除
+                                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
                                         verticalArrangement = Arrangement.spacedBy(4.dp),
                                         modifier = Modifier.weight(1f),
                                     ) {
