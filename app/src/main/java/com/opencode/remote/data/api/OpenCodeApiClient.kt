@@ -652,7 +652,8 @@ class OConnectorApiClient @Inject constructor(
                             header = fo.string("title"),
                             options = opts,
                             custom = fo["custom"]?.jsonPrimitive?.booleanOrNull ?: true,
-                            multiple = fo["multiple"]?.jsonPrimitive?.booleanOrNull ?: false,
+                            // 多选标志是 type=="multiselect"（活体验证），不是布尔字段
+                            multiple = fo.string("type") == "multiselect",
                         )
                     }
                     if (qs.isEmpty()) return@mapNotNull null
