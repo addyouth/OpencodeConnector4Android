@@ -333,9 +333,15 @@ data class V2ModelRef(
 @Serializable
 data class V2PromptBody(
     val text: String,
-    val agents: List<String>? = null,
+    val agents: List<V2AgentAttachment>? = null,
     val delivery: String? = null,
     val resume: Boolean? = null,
+)
+
+/** v2 Prompt.AgentAttachment —— {name(必填)}；字符串数组会被 400（Expected Prompt.AgentAttachment）。 */
+@Serializable
+data class V2AgentAttachment(
+    val name: String,
 )
 
 /** v2: POST /api/session/{id}/agent body —— {agent: "id"|"name"} */
