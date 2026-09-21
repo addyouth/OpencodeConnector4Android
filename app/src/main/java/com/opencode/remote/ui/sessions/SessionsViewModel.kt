@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.opencode.remote.data.api.dto.SessionInfo
 import com.opencode.remote.data.api.dto.MemoEntry
+import com.opencode.remote.data.api.dto.WorktreeInfo
 import com.opencode.remote.data.datastore.ConnectionPreferences
 import com.opencode.remote.data.datastore.MemoManager
 import com.opencode.remote.data.repository.OConnectorRepository
@@ -51,6 +52,11 @@ data class SessionsUiState(
     val listDensity: ListDensity = ListDensity.DEFAULT,
     // Child session tree expansion
     val expandedParents: Set<String> = emptySet(),
+    // Worktree manager state
+    val showWorktreeDialog: Boolean = false,
+    val worktreeProjectID: String? = null,
+    val worktreeDirs: List<WorktreeInfo> = emptyList(),
+    val isLoadingWorktrees: Boolean = false,
 )
 
 @HiltViewModel
@@ -338,6 +344,85 @@ class SessionsViewModel @Inject constructor(
 
     fun clearError() {
         _uiState.update { it.copy(error = null) }
+    }
+
+    // ─── Worktree 真管理 ───
+
+    /** 目录→projectID（canonical 比对，找不到回 global）。 */
+    suspend fun projectIdForDirectory(directory: String): String {
+        return try {
+            val norm = directory.replace('/', '\\')
+            repository.listProjects().firstOrNull {
+                it.worktree?.replace('/', '\\').equals(norm, ignoreCase = true)
+            }?.id?.takeIf { it.isNotBlank() } ?: "global"
+        } catch (e: Exception) {
+            Log.w(TAG, "projectIdForDirectory failed, fallback global", e)
+            "global"
+        }
+    }
+
+    fun openWorktrees(directory: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(showWorktreeDialog = true, isLoadingWorktrees = true, worktreeDirs = emptyList()) }
+            try {
+                val pid = projectIdForDirectory(directory)
+                val dirs = repository.listWorktrees(pid)
+                _uiState.update { it.copy(worktreeProjectID = pid, worktreeDirs = dirs, isLoadingWorktrees = false) }
+            } catch (e: Exception) {
+                Log.e(TAG, "load worktrees failed", e)
+                val s = com.opencode.remote.ui.strings.AppLocale.strings
+                _uiState.update { it.copy(isLoadingWorktrees = false, error = s.errLoadSessions.replace("%s", e.localizedMessage ?: e.javaClass.simpleName)) }
+            }
+        }
+    }
+
+    fun closeWorktrees() {
+        _uiState.update { it.copy(showWorktreeDialog = false) }
+    }
+
+    fun createWorktree(branch: String, name: String) {
+        val pid = _uiState.value.worktreeProjectID ?: return
+        viewModelScope.launch {
+            try {
+                repository.createWorktree(pid, branch.ifBlank { null }, name.ifBlank { null })
+                val dirs = repository.listWorktrees(pid)
+                _uiState.update { it.copy(worktreeDirs = dirs) }
+            } catch (e: Exception) {
+                Log.e(TAG, "create worktree failed", e)
+                val s = com.opencode.remote.ui.strings.AppLocale.strings
+                _uiState.update { it.copy(error = s.errCreateSession.replace("%s", e.localizedMessage ?: e.javaClass.simpleName)) }
+            }
+        }
+    }
+
+    fun removeWorktree(directory: String) {
+        val pid = _uiState.value.worktreeProjectID ?: return
+        viewModelScope.launch {
+            try {
+                repository.removeWorktree(pid, directory)
+                val dirs = repository.listWorktrees(pid)
+                _uiState.update { it.copy(worktreeDirs = dirs) }
+            } catch (e: Exception) {
+                Log.e(TAG, "remove worktree failed", e)
+                val s = com.opencode.remote.ui.strings.AppLocale.strings
+                _uiState.update { it.copy(error = s.errDeleteSession.replace("%s", e.localizedMessage ?: e.javaClass.simpleName)) }
+            }
+        }
+    }
+
+    fun refreshWorktrees() {
+        val pid = _uiState.value.worktreeProjectID ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingWorktrees = true) }
+            try {
+                repository.refreshWorktrees(pid)
+                val dirs = repository.listWorktrees(pid)
+                _uiState.update { it.copy(worktreeDirs = dirs, isLoadingWorktrees = false) }
+            } catch (e: Exception) {
+                Log.e(TAG, "refresh worktrees failed", e)
+                _uiState.update { it.copy(isLoadingWorktrees = false) }
+            }
+        }
     }
 
     // ─── Memo Panel ────────────────────────────────────────────────

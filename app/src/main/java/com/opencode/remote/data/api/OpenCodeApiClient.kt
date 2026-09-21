@@ -336,6 +336,76 @@ class OConnectorApiClient @Inject constructor(
         throw IllegalStateException("shell timed out after ${timeoutMs / 1000}s")
     }
 
+    /** v2 worktree 真管理：list/create/delete/refresh（projectID 必填）。 */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun listWorktrees(projectID: String): List<WorktreeInfo> {
+        return try {
+            val el = getJson("/api/worktree") { parameter("projectID", projectID) }
+            val arr = (el as? JsonObject)?.get("data") as? JsonArray ?: el.jsonArray
+            arr.mapNotNull { item ->
+                try { json.decodeFromJsonElement(WorktreeInfo.serializer(), item) }
+                catch (e: Exception) { Log.w(TAG, "Bad worktree item: ${e.message}"); null }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "listWorktrees failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    suspend fun createWorktree(
+        projectID: String,
+        branch: String? = null,
+        name: String? = null,
+        directory: String? = null,
+        from: String? = null,
+    ) {
+        client.post(fullUrl("/api/worktree")) {
+            expectSuccess = true
+            setBody(buildJsonObject {
+                put("projectID", projectID)
+                if (!branch.isNullOrBlank()) put("branch", branch)
+                if (!name.isNullOrBlank()) put("name", name)
+                if (!directory.isNullOrBlank()) put("directory", directory)
+                if (!from.isNullOrBlank()) put("from", from)
+            })
+        }
+    }
+
+    suspend fun removeWorktree(projectID: String, directory: String, force: Boolean = false) {
+        client.delete(fullUrl("/api/worktree")) {
+            expectSuccess = true
+            setBody(buildJsonObject {
+                put("projectID", projectID)
+                put("directory", directory)
+                put("force", force)
+            })
+        }
+    }
+
+    suspend fun refreshWorktrees(projectID: String) {
+        client.post(fullUrl("/api/worktree/refresh")) {
+            expectSuccess = true
+            setBody(buildJsonObject { put("projectID", projectID) })
+        }
+    }
+
+    /** GET /api/model/default → 默认模型（清理旧 /api/config 解析链）。 */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun getDefaultModel(): ModelSelectionRef? {
+        return try {
+            val el = getJson("/api/model/default") {}
+            val d = (el as? JsonObject)?.get("data") ?: el
+            val o = d.jsonObject
+            val p = o.string("providerID")
+            val id = o.string("modelID") ?: o.string("id")
+            if (p.isNullOrEmpty() || id.isNullOrEmpty()) null
+            else ModelSelectionRef(p, id)
+        } catch (e: Exception) {
+            Log.w(TAG, "getDefaultModel failed: ${e.message}")
+            null
+        }
+    }
+
     /** DELETE /api/session/{id} */
     suspend fun deleteSession(id: String, directory: String? = null) {
         client.delete(fullUrl("/api/session/$id")) {}
@@ -488,25 +558,19 @@ class OConnectorApiClient @Inject constructor(
     }
 
     /**
-     * 服务端生效默认值（auto 解析成真名显示用）：model 取 /api/config 解析结果，
+     * 服务端生效默认值（auto 解析成真名显示用）：model 走专用端点，
      * agent 取 raw 配置 default_agent（解析结果里没有，Vault 内文件 fs/read 必 200）。
      */
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun getServerDefaults(): Pair<String?, ModelSelectionRef?> {
+        val model = getDefaultModel()
         return try {
             val config = getJson("/api/config") {}.jsonArray
             var agent: String? = null
-            var model: ModelSelectionRef? = null
             for (item in config) {
                 val obj = item.jsonObject
                 if (obj.string("type") != "document") continue
                 val info = obj["info"]?.jsonObject
-                if (model == null && info != null) {
-                    val m = info["model"]?.jsonObject
-                    val p = m?.string("providerID")
-                    val id = m?.string("model") ?: m?.string("id")
-                    if (!p.isNullOrEmpty() && !id.isNullOrEmpty()) model = ModelSelectionRef(p, id)
-                }
                 if (agent == null) agent = info?.string("default_agent")
                 if (agent == null) {
                     val p = obj.string("path")
@@ -518,13 +582,13 @@ class OConnectorApiClient @Inject constructor(
                         } catch (_: Exception) {}
                     }
                 }
-                if (agent != null && model != null) break
+                if (agent != null) break
             }
             Log.d(TAG, "Server defaults: agent=$agent model=$model")
             Pair(agent, model)
         } catch (e: Exception) {
             Log.w(TAG, "getServerDefaults failed: ${e.message}")
-            Pair(null, null)
+            Pair(null, model)
         }
     }
 

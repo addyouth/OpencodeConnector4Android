@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -37,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.opencode.remote.data.api.dto.SessionInfo
+import com.opencode.remote.data.api.dto.WorktreeInfo
 import com.opencode.remote.data.api.dto.SessionSummary
 import com.opencode.remote.data.sessionstore.SessionStatus
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -406,6 +408,9 @@ fun ProjectSessionsScreen(
                                     contentDescription = if (uiState.listDensity == ListDensity.COMPACT) s.densityDefault else s.densityCompact,
                                 )
                             }
+                            IconButton(onClick = { viewModel.openWorktrees(directory) }) {
+                                Icon(Icons.Default.Folder, contentDescription = s.worktreeTitle)
+                            }
                             IconButton(onClick = { viewModel.loadSessions() }) {
                                 Icon(Icons.Default.Refresh, contentDescription = s.refresh)
                             }
@@ -624,6 +629,22 @@ fun ProjectSessionsScreen(
                         onDismiss = viewModel::clearError,
                     )
 
+                    // Worktree manager dialog
+                    if (uiState.showWorktreeDialog) {
+                        WorktreeDialog(
+                            title = s.worktreeTitle,
+                            dirs = uiState.worktreeDirs,
+                            isLoading = uiState.isLoadingWorktrees,
+                            branchHint = s.worktreeBranch,
+                            nameHint = s.worktreeName,
+                            closeText = s.close,
+                            onRefresh = viewModel::refreshWorktrees,
+                            onCreate = viewModel::createWorktree,
+                            onDelete = viewModel::removeWorktree,
+                            onDismiss = viewModel::closeWorktrees,
+                        )
+                    }
+
                     // Rename dialog
                     var renameText by remember(renameTarget) { mutableStateOf(renameTarget?.title ?: "") }
                     renameTarget?.let { target ->
@@ -706,6 +727,109 @@ fun ProjectSessionsScreen(
             }
         }
     }
+}
+
+@Composable
+private fun WorktreeDialog(
+    title: String,
+    dirs: List<WorktreeInfo>,
+    isLoading: Boolean,
+    branchHint: String,
+    nameHint: String,
+    closeText: String,
+    onRefresh: () -> Unit,
+    onCreate: (branch: String, name: String) -> Unit,
+    onDelete: (directory: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var branch by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, modifier = Modifier.weight(1f))
+                IconButton(onClick = onRefresh) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(20.dp))
+                }
+            }
+        },
+        text = {
+            Column {
+                if (isLoading) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                        items(dirs, key = { it.directory }) { w ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    Icons.Default.Folder,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = w.directory.replace('\\', '/').substringAfterLast('/').ifEmpty { w.directory },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                IconButton(onClick = { onDelete(w.directory) }) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = branch,
+                    onValueChange = { branch = it },
+                    placeholder = { Text(branchHint) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
+                )
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    placeholder = { Text(nameHint) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onCreate(branch.trim(), name.trim())
+                    branch = ""
+                    name = ""
+                },
+                enabled = branch.isNotBlank(),
+            ) { Text(branchHint) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(closeText) }
+        },
+    )
 }
 
 @Composable

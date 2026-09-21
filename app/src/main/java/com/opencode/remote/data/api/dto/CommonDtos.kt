@@ -104,6 +104,13 @@ data class FileDiffInfo(
     val status: String = "modified",
 )
 
+/** v2 GET /api/worktree?projectID= → [{directory, strategy?}]（真 worktree 管理）。 */
+@Serializable
+data class WorktreeInfo(
+    val directory: String = "",
+    val strategy: String? = null,
+)
+
 @Serializable
 data class ProviderList(
     @SerialName("all")

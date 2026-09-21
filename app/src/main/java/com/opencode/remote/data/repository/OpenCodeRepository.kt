@@ -120,6 +120,12 @@ interface OConnectorRepository {
     /** shell 直调（跳过 AI）：发命令轮询取输出 */
     suspend fun runShell(sessionId: String, command: String): ShellResult
 
+    /** worktree 真管理 */
+    suspend fun listWorktrees(projectID: String): List<WorktreeInfo>
+    suspend fun createWorktree(projectID: String, branch: String? = null, name: String? = null, directory: String? = null, from: String? = null)
+    suspend fun removeWorktree(projectID: String, directory: String)
+    suspend fun refreshWorktrees(projectID: String)
+
     // ─── Test Connection ─────────────────────────────────────────────
 
     suspend fun testConnection(): Boolean
@@ -590,6 +596,18 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     override suspend fun runShell(sessionId: String, command: String): ShellResult =
         requireClient().runShell(sessionId, command)
+
+    override suspend fun listWorktrees(projectID: String): List<WorktreeInfo> =
+        requireClient().listWorktrees(projectID)
+
+    override suspend fun createWorktree(projectID: String, branch: String?, name: String?, directory: String?, from: String?) =
+        requireClient().createWorktree(projectID, branch, name, directory, from)
+
+    override suspend fun removeWorktree(projectID: String, directory: String) =
+        requireClient().removeWorktree(projectID, directory)
+
+    override suspend fun refreshWorktrees(projectID: String) =
+        requireClient().refreshWorktrees(projectID)
 
     // ─── Test Connection ─────────────────────────────────────────────
 
