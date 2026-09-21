@@ -1353,7 +1353,7 @@ class ChatViewModel @Inject constructor(
 
     fun runShell() {
         val sid = _uiState.value.sessionId
-        val cmd = _uiState.value.shellCommand.trim()
+        val cmd = _uiState.value.chatDisplay.shellCommand.trim()
         if (sid.isBlank() || cmd.isEmpty()) return
         _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(isRunningShell = true, shellOutput = "")) }
         viewModelScope.launch {

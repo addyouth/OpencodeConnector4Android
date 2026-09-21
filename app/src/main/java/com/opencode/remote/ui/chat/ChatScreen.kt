@@ -603,7 +603,7 @@ private fun ShellDialog(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     shape = RoundedCornerShape(8.dp),
-                    fontFamily = FontFamily.Monospace,
+                    textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace),
                 )
                 Spacer(Modifier.height(8.dp))
                 Surface(
