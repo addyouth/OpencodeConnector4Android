@@ -425,7 +425,8 @@ fun ProjectSessionsScreen(
                             }
                         },
                         text = { Text(s.newSession) },
-                        expanded = projectSessions.isEmpty(),
+                        // 常显文字：按钮变大变明确，排除误触顶部卡片的可能
+                        expanded = true,
                     )
                 },
             ) { padding ->
