@@ -107,12 +107,14 @@ interface OConnectorRepository {
     suspend fun listProjects(): List<ProjectInfo>
 
     // ─── Session Enhancement Pack（会话增强包：重命名/压缩/用量/搬迁/diff） ──
-
     suspend fun renameSession(sessionId: String, title: String): SessionInfo
     suspend fun compactSession(sessionId: String)
     suspend fun getSessionContext(sessionId: String): List<MessageInfo>
     suspend fun moveSession(sessionId: String, directory: String)
     suspend fun getSessionDiff(sessionId: String, from: String? = null, to: String? = null): List<FileDiffInfo>
+
+    /** shell 直调（跳过 AI）：发命令轮询取输出 */
+    suspend fun runShell(sessionId: String, command: String): ShellResult
 
     // ─── Test Connection ─────────────────────────────────────────────
 
@@ -575,6 +577,9 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     override suspend fun getSessionDiff(sessionId: String, from: String?, to: String?): List<FileDiffInfo> =
         requireClient().getSessionDiff(sessionId, from, to)
+
+    override suspend fun runShell(sessionId: String, command: String): ShellResult =
+        requireClient().runShell(sessionId, command)
 
     // ─── Test Connection ─────────────────────────────────────────────
 

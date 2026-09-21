@@ -126,6 +126,11 @@ data class ChatDisplayState(
     val showDiffDialog: Boolean = false,
     val diffFiles: List<FileDiffInfo> = emptyList(),
     val isLoadingDiff: Boolean = false,
+    // shell 直调弹窗状态
+    val showShellDialog: Boolean = false,
+    val shellCommand: String = "",
+    val shellOutput: String = "",
+    val isRunningShell: Boolean = false,
 )
 
 data class ChatUiState(
@@ -1331,6 +1336,43 @@ class ChatViewModel @Inject constructor(
 
     fun closeDiffDialog() {
         _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showDiffDialog = false)) }
+    }
+
+    /** shell 直调：跳过 AI，直接跑命令取输出（无 token 消耗）。 */
+    fun openShellDialog() {
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showShellDialog = true)) }
+    }
+
+    fun closeShellDialog() {
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showShellDialog = false)) }
+    }
+
+    fun onShellInput(text: String) {
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(shellCommand = text)) }
+    }
+
+    fun runShell() {
+        val sid = _uiState.value.sessionId
+        val cmd = _uiState.value.shellCommand.trim()
+        if (sid.isBlank() || cmd.isEmpty()) return
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(isRunningShell = true, shellOutput = "")) }
+        viewModelScope.launch {
+            try {
+                val r = repository.runShell(sid, cmd)
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(
+                    shellOutput = r.output.ifBlank { "(no output)" } +
+                        (if ((r.exit ?: 0) != 0) "\n[exit ${r.exit}]" else "") +
+                        (if (r.truncated) "\n[truncated]" else ""),
+                    isRunningShell = false,
+                ))}
+            } catch (e: Exception) {
+                Log.e(TAG, "runShell failed", e)
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(
+                    shellOutput = "Error: ${e.localizedMessage ?: e.javaClass.simpleName}",
+                    isRunningShell = false,
+                ))}
+            }
+        }
     }
 
     fun abortSession() {        viewModelScope.launch {

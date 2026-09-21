@@ -23,7 +23,10 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -293,6 +296,41 @@ class OConnectorApiClient @Inject constructor(
             try { json.decodeFromJsonElement(FileDiffInfo.serializer(), item) }
             catch (e: Exception) { Log.w(TAG, "Failed to decode diff: ${e.message}"); null }
         }
+    }
+
+    /** POST /api/session/{id}/shell {command} → 204；轮询 shell 消息取输出（30s 上限）。 */
+    suspend fun runShell(sessionId: String, command: String, timeoutMs: Long = 30_000): ShellResult {
+        client.post(fullUrl("/api/session/$sessionId/shell")) {
+            expectSuccess = true
+            setBody(JsonObject(mapOf("command" to JsonPrimitive(command))))
+        }
+        val t0 = System.currentTimeMillis()
+        val deadline = t0 + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            kotlinx.coroutines.delay(2_000)
+            try {
+                val el = getJson("/api/session/$sessionId/message") {
+                    parameter("limit", 10)
+                }
+                val arr = el.dataArray() ?: continue
+                for (item in arr) {
+                    val o = item.jsonObject
+                    if (o.string("type") != "shell") continue
+                    if (o.string("command") != command) continue
+                    val created = o["time"]?.jsonObject?.longOrNull("created") ?: 0L
+                    if (created < t0) continue
+                    if (o.string("status") != "exited") continue
+                    val out = o["output"]?.jsonObject
+                    return ShellResult(
+                        output = out?.string("output") ?: "",
+                        exit = out?.get("exit")?.jsonPrimitive?.intOrNull
+                            ?: o["exit"]?.jsonPrimitive?.intOrNull,
+                        truncated = out?.get("truncated")?.jsonPrimitive?.booleanOrNull ?: false,
+                    )
+                }
+            } catch (e: Exception) { Log.w(TAG, "runShell poll: ${e.message}") }
+        }
+        throw IllegalStateException("shell timed out after ${timeoutMs / 1000}s")
     }
 
     /** DELETE /api/session/{id} */
@@ -731,4 +769,7 @@ class OConnectorApiClient @Inject constructor(
 
     private fun JsonObject.string(key: String): String? =
         this[key]?.jsonPrimitive?.contentOrNull
+
+    private fun JsonObject.longOrNull(key: String): Long? =
+        this[key]?.jsonPrimitive?.longOrNull
 }

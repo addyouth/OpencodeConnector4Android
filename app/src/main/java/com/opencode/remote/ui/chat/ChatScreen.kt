@@ -293,6 +293,9 @@ fun ChatScreen(
                             IconButton(onClick = viewModel::openDiffDialog) {
                                 Icon(Icons.Default.Difference, contentDescription = s.diffTitle)
                             }
+                            IconButton(onClick = viewModel::openShellDialog) {
+                                Icon(Icons.Default.Terminal, contentDescription = s.shellTitle)
+                            }
                             IconButton(onClick = viewModel::compactSession) {
                                 Icon(Icons.Default.Compress, contentDescription = s.compactTitle)
                             }
@@ -573,6 +576,74 @@ fun ChatScreen(
             )
         }
     }
+}
+
+@Composable
+private fun ShellDialog(
+    title: String,
+    command: String,
+    output: String,
+    isRunning: Boolean,
+    inputPlaceholder: String,
+    runText: String,
+    closeText: String,
+    onInputChange: (String) -> Unit,
+    onRun: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = command,
+                    onValueChange = onInputChange,
+                    placeholder = { Text(inputPlaceholder) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
+                    fontFamily = FontFamily.Monospace,
+                )
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .heightIn(min = 80.dp, max = 300.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(8.dp),
+                        contentAlignment = if (isRunning || output.isEmpty()) Alignment.Center else Alignment.TopStart,
+                    ) {
+                        when {
+                            isRunning -> CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                            output.isEmpty() -> Text(
+                                text = "$",
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            else -> SelectionContainer {
+                                Text(
+                                    text = output,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onRun, enabled = !isRunning && command.isNotBlank()) { Text(runText) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(closeText) }
+        },
+    )
 }
 
 @Composable

@@ -105,8 +105,24 @@ object V2MessageParser {
         // 否则丢弃（idle/model-switched 等合成消息，否则渲染成空白泡）。
         if (parts.isEmpty()) {
             val topText = obj.string("text")
-            if (topText.isNullOrBlank()) return null
-            parts += MessagePart(type = "text", text = topText, messageID = id)
+            if (!topText.isNullOrBlank()) {
+                parts += MessagePart(type = "text", text = topText, messageID = id)
+                return MessageInfo(info = info, parts = parts)
+            }
+            // shell 消息：拼成 "$ 命令\n输出" 文本段（远程终端回显，历史可见）
+            if (type == "shell") {
+                val cmd = obj.string("command") ?: ""
+                val out = obj["output"]?.jsonObject?.string("output") ?: ""
+                val code = obj["exit"]
+                val exitStr = try { code?.jsonPrimitive?.contentOrNull } catch (_: Exception) { null }
+                val text = ("$ " + cmd + "\n" + out +
+                    (if (!exitStr.isNullOrBlank() && exitStr != "0") " [exit $exitStr]" else "")).trim()
+                if (text.isNotBlank()) {
+                    parts += MessagePart(type = "text", text = text, messageID = id)
+                    return MessageInfo(info = info, parts = parts)
+                }
+            }
+            return null
         }
 
         return MessageInfo(info = info, parts = parts)

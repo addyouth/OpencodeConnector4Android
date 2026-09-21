@@ -344,6 +344,14 @@ data class V2AgentAttachment(
     val name: String,
 )
 
+/** v2 shell 直调结果（POST 本体 204，输出靠轮询 shell 消息）。 */
+@Serializable
+data class ShellResult(
+    val output: String = "",
+    val exit: Int? = null,
+    val truncated: Boolean = false,
+)
+
 /** v2: POST /api/session/{id}/agent body —— {agent: "id"|"name"} */
 @Serializable
 data class V2AgentSwitchBody(
