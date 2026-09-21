@@ -42,11 +42,7 @@ internal fun QuestionAskBubble(
     val selectedOptions by selectedOptionsList[currentIndex]
     val customAnswer by customAnswerList[currentIndex]
 
-    val hasAnswer = if (question.options.isNotEmpty()) {
-        selectedOptions.isNotEmpty()
-    } else {
-        customAnswer.isNotBlank()
-    }
+    val hasAnswer = selectedOptions.isNotEmpty() || customAnswer.isNotBlank()
 
     Card(
         modifier = modifier.fillMaxWidth(),

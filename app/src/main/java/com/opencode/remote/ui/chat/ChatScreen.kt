@@ -101,6 +101,7 @@ fun ChatScreen(
     var shouldAutoScroll by remember { mutableStateOf(true) }
     var initialScrollDone by remember(sessionId) { mutableStateOf(false) }
     var resumeKey by remember { mutableIntStateOf(0) }
+    var showMoreMenu by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
     // Session initialization
@@ -282,39 +283,50 @@ fun ChatScreen(
                                     )
                                 }
                             } else {
-                                // Undo button — show when there are user messages to undo
-                                val hasUserMessages = uiState.messages.any { it.role == "user" }
-                                if (hasUserMessages) {
-                                    IconButton(onClick = viewModel::undoLastMessage) {
-                                        Icon(
-                                            Icons.Default.Undo,
-                                            contentDescription = s.undo,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
+                                // 次要操作收进溢出菜单（顶栏图标太多会把标题挤成竖排）
+                                Box {
+                                    IconButton(onClick = { showMoreMenu = true }) {
+                                        Icon(Icons.Default.MoreVert, contentDescription = s.moreActions)
                                     }
-                                }
-                                // Redo button — show when there's an active revert
-                                if (uiState.revertMessageId != null) {
-                                    IconButton(onClick = viewModel::redoLastUndo) {
-                                        Icon(
-                                            Icons.Default.Redo,
-                                            contentDescription = s.redo,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    DropdownMenu(
+                                        expanded = showMoreMenu,
+                                        onDismissRequest = { showMoreMenu = false },
+                                    ) {
+                                        val hasUserMessages = uiState.messages.any { it.role == "user" }
+                                        if (hasUserMessages) {
+                                            DropdownMenuItem(
+                                                text = { Text(s.undo) },
+                                                leadingIcon = { Icon(Icons.Default.Undo, contentDescription = null) },
+                                                onClick = { showMoreMenu = false; viewModel.undoLastMessage() },
+                                            )
+                                        }
+                                        if (uiState.revertMessageId != null) {
+                                            DropdownMenuItem(
+                                                text = { Text(s.redo) },
+                                                leadingIcon = { Icon(Icons.Default.Redo, contentDescription = null) },
+                                                onClick = { showMoreMenu = false; viewModel.redoLastUndo() },
+                                            )
+                                        }
+                                        DropdownMenuItem(
+                                            text = { Text(s.diffTitle) },
+                                            leadingIcon = { Icon(Icons.Default.Difference, contentDescription = null) },
+                                            onClick = { showMoreMenu = false; viewModel.openDiffDialog() },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(s.shellTitle) },
+                                            leadingIcon = { Icon(Icons.Default.Terminal, contentDescription = null) },
+                                            onClick = { showMoreMenu = false; viewModel.openShellDialog() },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(s.compactTitle) },
+                                            leadingIcon = { Icon(Icons.Default.Compress, contentDescription = null) },
+                                            onClick = { showMoreMenu = false; viewModel.compactSession() },
                                         )
                                     }
                                 }
                             }
                             IconButton(onClick = { viewModel.initialize(sessionId, directory) }) {
                                 Icon(Icons.Default.Refresh, contentDescription = s.refresh)
-                            }
-                            IconButton(onClick = viewModel::openDiffDialog) {
-                                Icon(Icons.Default.Difference, contentDescription = s.diffTitle)
-                            }
-                            IconButton(onClick = viewModel::openShellDialog) {
-                                Icon(Icons.Default.Terminal, contentDescription = s.shellTitle)
-                            }
-                            IconButton(onClick = viewModel::compactSession) {
-                                Icon(Icons.Default.Compress, contentDescription = s.compactTitle)
                             }
                         },
                     )
