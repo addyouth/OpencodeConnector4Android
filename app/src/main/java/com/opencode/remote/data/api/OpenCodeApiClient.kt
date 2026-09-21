@@ -11,7 +11,6 @@ import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.*
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readRemaining
-import io.ktor.utils.io.core.readByteArray
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
