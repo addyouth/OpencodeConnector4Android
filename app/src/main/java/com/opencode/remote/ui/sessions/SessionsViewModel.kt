@@ -245,11 +245,6 @@ class SessionsViewModel @Inject constructor(
         }
     }
 
-    /** 示踪：FAB 回调是否执行（走现有 error 通道显示，无新依赖）。 */
-    fun debugTap() {
-        _uiState.update { it.copy(error = "TAP " + System.currentTimeMillis()) }
-    }
-
     fun createSession(directory: String? = null) {        viewModelScope.launch {
             _uiState.update { it.copy(isCreating = true, error = null) }
             try {

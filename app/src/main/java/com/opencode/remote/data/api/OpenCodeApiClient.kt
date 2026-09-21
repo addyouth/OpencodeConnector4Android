@@ -307,6 +307,8 @@ class OConnectorApiClient @Inject constructor(
             try { V2MessageParser.fromJsonElement(item) }
             catch (e: Exception) { Log.w(TAG, "Failed to parse v2 message: $item", e); null }
         }
+        // v2 倒序（新→旧）→ 转正序（旧→新）从上往下渲染；截断保留最新
+        .sortedBy { it.info.time?.created ?: 0L }
         return if (messages.size > MAX_MESSAGES) {
             Log.w(TAG, "Server returned ${messages.size} messages despite limit=$MAX_MESSAGES, truncating")
             messages.takeLast(MAX_MESSAGES)

@@ -400,13 +400,6 @@ fun ProjectSessionsScreen(
                                     contentDescription = if (uiState.listDensity == ListDensity.COMPACT) s.densityDefault else s.densityCompact,
                                 )
                             }
-                            // 第二新建入口（与 FAB 同函数）：分开 FAB 专属问题还是全局问题
-                            IconButton(onClick = {
-                                viewModel.debugTap()
-                                viewModel.createSession(directory)
-                            }) {
-                                Icon(Icons.Default.Add, contentDescription = null)
-                            }
                             IconButton(onClick = { viewModel.loadSessions() }) {
                                 Icon(Icons.Default.Refresh, contentDescription = s.refresh)
                             }
@@ -415,25 +408,10 @@ fun ProjectSessionsScreen(
                 },
                 floatingActionButton = {
                     ExtendedFloatingActionButton(
-                        onClick = {
-                            // 示踪：回调是否执行。无此条即点击没进函数；有但无转圈即作用域已死
-                            viewModel.debugTap()
-                            viewModel.createSession(directory)
-                        },
-                        icon = {
-                            // 入口可见性：点下即转圈；若点的没反应（不转圈），点击没进函数
-                            if (uiState.isCreating) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    strokeWidth = 2.dp,
-                                )
-                            } else {
-                                Icon(Icons.Default.Add, contentDescription = null)
-                            }
-                        },
+                        onClick = { viewModel.createSession(directory) },
+                        icon = { Icon(Icons.Default.Add, contentDescription = null) },
                         text = { Text(s.newSession) },
-                        // 常显文字：按钮变大变明确，排除误触顶部卡片的可能
-                        expanded = true,
+                        expanded = projectSessions.isEmpty(),
                     )
                 },
             ) { padding ->

@@ -51,6 +51,8 @@ fun FileTreeView(
     onToggleFilePreview: ((FileNode) -> Unit)? = null,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
+        // 返回行独立于空态：空目录也要能返回上级（之前埋在 else 里，空目录无返回键）
+        val showBack = currentPath != "." && currentPath.isNotEmpty() && onNavigateUp != null
         when {
             isLoading -> {
                 CircularProgressIndicator(
@@ -62,19 +64,48 @@ fun FileTreeView(
                 )
             }
             files.isEmpty() -> {
-                Text(
-                    text = "Empty directory",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(16.dp),
-                )
+                Column(modifier = Modifier.fillMaxSize()) {
+                    if (showBack) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onNavigateUp?.invoke() }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowBack,
+                                contentDescription = "Go back",
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "..",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .weight(1f, fill = false),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Empty directory",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
+                }
             }
             else -> {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
                     // ".." / Go back row for navigating to parent directory
-                    if (currentPath != "." && currentPath.isNotEmpty() && onNavigateUp != null) {
+                    if (showBack) {
                         item(key = "__go_back__") {
                             Row(
                                 modifier = Modifier

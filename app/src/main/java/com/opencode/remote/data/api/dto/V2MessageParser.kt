@@ -27,10 +27,10 @@ import kotlinx.serialization.json.longOrNull
  */
 object V2MessageParser {
 
-    fun fromJsonElement(element: JsonElement): MessageInfo =
+    fun fromJsonElement(element: JsonElement): MessageInfo? =
         fromJsonObject(element.jsonObject)
 
-    fun fromJsonObject(obj: JsonObject): MessageInfo {
+    fun fromJsonObject(obj: JsonObject): MessageInfo? {
         val id = obj.string("id") ?: ""
         val type = obj.string("type") ?: ""
         val role = mapRole(type)
@@ -99,6 +99,14 @@ object V2MessageParser {
                     }
                 }
             }
+        }
+
+        // 无可渲染内容时：顶层 text 有就合成 text part（v2 user 消息文本只在顶层），
+        // 否则丢弃（idle/model-switched 等合成消息，否则渲染成空白泡）。
+        if (parts.isEmpty()) {
+            val topText = obj.string("text")
+            if (topText.isNullOrBlank()) return null
+            parts += MessagePart(type = "text", text = topText, messageID = id)
         }
 
         return MessageInfo(info = info, parts = parts)
