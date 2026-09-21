@@ -591,8 +591,8 @@ fun ProjectSessionsScreen(
                                                         isExpanded = isExpanded,
                                                         onToggleExpand = {
                                                             viewModel.toggleExpand(session.id)
-                                                            // Refresh children only on first expand
-                                                            if (!isExpanded && viewModel.shouldRefreshChildren(session.id)) {
+                                                            // 每次展开都刷（子 fork 可能在折叠时新增；once-only 会导致三角 permanently 消失）
+                                                            if (!isExpanded) {
                                                                 viewModel.refreshChildSessions(session.id)
                                                             }
                                                         },

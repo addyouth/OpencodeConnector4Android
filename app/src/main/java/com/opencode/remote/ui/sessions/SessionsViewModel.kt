@@ -306,6 +306,8 @@ class SessionsViewModel @Inject constructor(
             try {
                 repository.forkSession(sessionId, directory)
                 loadSessions()
+                // fork 出子后刷父的 children（否则折叠态下三角出不来）
+                refreshChildSessions(sessionId)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to fork session", e)
                 val s = com.opencode.remote.ui.strings.AppLocale.strings

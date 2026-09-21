@@ -649,7 +649,8 @@ class OConnectorApiClient @Inject constructor(
                             question = fo.string("description") ?: fo.string("title") ?: "",
                             header = fo.string("title"),
                             options = opts,
-                            custom = true,
+                            custom = fo["custom"]?.jsonPrimitive?.booleanOrNull ?: true,
+                            multiple = fo["multiple"]?.jsonPrimitive?.booleanOrNull ?: false,
                         )
                     }
                     if (qs.isEmpty()) return@mapNotNull null

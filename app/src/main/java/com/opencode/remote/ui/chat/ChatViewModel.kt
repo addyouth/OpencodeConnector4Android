@@ -1300,6 +1300,7 @@ class ChatViewModel @Inject constructor(
                 val fresh = repository.getMessages(sid, _uiState.value.sessionDirectory)
                 _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(messages = fresh.applyMessageFilters(it.sessionMeta.revertMessageId))) }
                 updateContextUsage()
+                try { android.widget.Toast.makeText(appContext, "已压缩", android.widget.Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
             } catch (e: Exception) {
                 Log.e(TAG, "compact failed", e)
                 val s = com.opencode.remote.ui.strings.AppLocale.strings
