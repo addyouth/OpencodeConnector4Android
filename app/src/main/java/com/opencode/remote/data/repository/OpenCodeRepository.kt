@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import com.opencode.remote.data.api.OConnectorApiClient
 import com.opencode.remote.data.api.OConnectorSseClient
+import com.opencode.remote.data.api.PtyWsClient
 import com.opencode.remote.data.api.dto.*
 import com.opencode.remote.data.datastore.ConnectionConfig
 import com.opencode.remote.data.network.NetworkMonitor
@@ -20,6 +21,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -125,6 +128,15 @@ interface OConnectorRepository {
     suspend fun createWorktree(projectID: String, branch: String? = null, name: String? = null, directory: String? = null, from: String? = null)
     suspend fun removeWorktree(projectID: String, directory: String)
     suspend fun refreshWorktrees(projectID: String)
+
+    /** 远程终端（单活跃）：输出流 + 状态流 */
+    val terminalText: StateFlow<String>
+    val terminalStatus: StateFlow<String>
+    suspend fun terminalOpen(directory: String?): String
+    fun terminalSend(text: String): Boolean
+    fun terminalReconnect(): Boolean
+    fun hasTerminal(): Boolean
+    fun terminalClose(delete: Boolean)
 
     // ─── Test Connection ─────────────────────────────────────────────
 
@@ -608,6 +620,78 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     override suspend fun refreshWorktrees(projectID: String) =
         requireClient().refreshWorktrees(projectID)
+
+    // ─── Terminal（单活跃 pty + cursor 续连） ────────────────────────────
+
+    private val _terminalText = MutableStateFlow("")
+    override val terminalText: StateFlow<String> = _terminalText.asStateFlow()
+
+    private val _terminalStatus = MutableStateFlow("closed")
+    override val terminalStatus: StateFlow<String> = _terminalStatus.asStateFlow()
+
+    private var ptySocket: PtyWsClient? = null
+    private var ptyId: String? = null
+    private var ptyCursor: Long = -1L
+
+    override fun hasTerminal(): Boolean = ptyId != null
+
+    override suspend fun terminalOpen(directory: String?): String {
+        val info = requireClient().createPty(directory)
+        val id = info.id.ifEmpty { throw IllegalStateException("empty pty id") }
+        ptyId = id
+        ptyCursor = -1L
+        _terminalText.value = ""
+        connectPtySocket(id, -1L)
+        return id
+    }
+
+    override fun terminalSend(text: String): Boolean =
+        try { ptySocket?.send(text) ?: false } catch (_: Exception) { false }
+
+    override fun terminalReconnect(): Boolean {
+        val id = ptyId ?: return false
+        val c = try { ptySocket?.lastCursor?.takeIf { it >= 0 } ?: ptyCursor } catch (_: Exception) { ptyCursor }
+        ptyCursor = c
+        connectPtySocket(id, c)
+        return true
+    }
+
+    override fun terminalClose(delete: Boolean) {
+        try { ptySocket?.lastCursor?.takeIf { it >= 0 }?.let { ptyCursor = it } } catch (_: Exception) {}
+        try { ptySocket?.close() } catch (_: Exception) {}
+        ptySocket = null
+        _terminalStatus.value = "closed"
+        if (delete) {
+            val id = ptyId
+            ptyId = null
+            if (!id.isNullOrEmpty()) {
+                repoScope.launch {
+                    try { apiClient.deletePty(id) } catch (e: Exception) { Log.w(TAG, "deletePty failed", e) }
+                }
+            }
+        }
+    }
+
+    private fun connectPtySocket(id: String, cursor: Long) {
+        try { ptySocket?.close() } catch (_: Exception) {}
+        val base = requireClient().serverBaseUrl()
+        val auth = try { requireClient().serverAuthHeader() } catch (_: Exception) { null }
+        val ws = base.replaceFirst("http", "ws") + "/api/pty/$id/connect?cursor=$cursor"
+        _terminalStatus.value = "connecting"
+        val client = PtyWsClient()
+        ptySocket = client
+        client.connect(
+            url = ws,
+            authHeader = auth,
+            onOutput = { chunk ->
+                _terminalText.value = (_terminalText.value + chunk).takeLast(120_000)
+            },
+            onClosed = { reason ->
+                _terminalStatus.value = "closed: $reason"
+            },
+        )
+        _terminalStatus.value = "open"
+    }
 
     // ─── Test Connection ─────────────────────────────────────────────
 

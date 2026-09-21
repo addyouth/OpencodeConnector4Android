@@ -111,6 +111,16 @@ data class WorktreeInfo(
     val strategy: String? = null,
 )
 
+/** v2 pty 信息：{id, title?, command?, cwd?, status?...} */
+@Serializable
+data class PtyInfo(
+    val id: String = "",
+    val title: String? = null,
+    val command: String? = null,
+    val cwd: String? = null,
+    val status: String? = null,
+)
+
 @Serializable
 data class ProviderList(
     @SerialName("all")

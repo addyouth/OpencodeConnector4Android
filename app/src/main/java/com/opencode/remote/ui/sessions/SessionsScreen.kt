@@ -310,6 +310,7 @@ fun ProjectSessionsScreen(
     onSessionClick: (String) -> Unit,
     onBack: () -> Unit,
     viewModel: SessionsViewModel,  // Shared with SessionsScreen — passed from AppNavigation
+    onTerminalClick: (String) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val s = AppLocale.strings
@@ -410,6 +411,9 @@ fun ProjectSessionsScreen(
                             }
                             IconButton(onClick = { viewModel.openWorktrees(directory) }) {
                                 Icon(Icons.Default.Folder, contentDescription = s.worktreeTitle)
+                            }
+                            IconButton(onClick = { onTerminalClick(directory) }) {
+                                Icon(Icons.Default.Terminal, contentDescription = s.terminalTitle)
                             }
                             IconButton(onClick = { viewModel.loadSessions() }) {
                                 Icon(Icons.Default.Refresh, contentDescription = s.refresh)

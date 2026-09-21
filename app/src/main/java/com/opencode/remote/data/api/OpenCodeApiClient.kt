@@ -406,6 +406,31 @@ class OConnectorApiClient @Inject constructor(
         }
     }
 
+    /** POST /api/pty {cwd?} → 建终端（默认 shell，running）。 */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun createPty(directory: String? = null): PtyInfo {
+        val el = postJson("/api/pty", expectSuccess = true) {
+            setBody(buildJsonObject {
+                if (!directory.isNullOrBlank()) put("cwd", JsonPrimitive(directory))
+            })
+        }
+        return json.decodeFromJsonElement(
+            PtyInfo.serializer(),
+            (el as? JsonObject)?.get("data") ?: el
+        )
+    }
+
+    /** DELETE /api/pty/{id} → 关终端（best-effort）。 */
+    suspend fun deletePty(ptyId: String) {
+        try {
+            client.delete(fullUrl("/api/pty/$ptyId")) { expectSuccess = true }
+        } catch (e: Exception) { Log.w(TAG, "deletePty failed: ${e.message}") }
+    }
+
+    /** WS 握手用：serve 根地址与认证头。 */
+    fun serverBaseUrl(): String = baseUrl
+    fun serverAuthHeader(): String? = authHeader
+
     /** DELETE /api/session/{id} */
     suspend fun deleteSession(id: String, directory: String? = null) {
         client.delete(fullUrl("/api/session/$id")) {}

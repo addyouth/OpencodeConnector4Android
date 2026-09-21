@@ -28,6 +28,7 @@ import com.opencode.remote.ui.sessions.ProjectSessionsScreen
 import com.opencode.remote.ui.chat.ChatScreen
 import com.opencode.remote.ui.help.HelpScreen
 import com.opencode.remote.ui.strings.AppLocale
+import com.opencode.remote.ui.terminal.TerminalScreen
 import com.opencode.remote.ui.update.UpdateViewModel
 
 object Routes {
@@ -38,12 +39,17 @@ object Routes {
     const val PROJECT_SESSIONS = "project/{directory}"
     const val CHAT = "chat/{sessionId}?directory={directory}"
     const val HELP = "help"
+    const val TERMINAL = "terminal?directory={directory}"
 
     fun chat(sessionId: String, directory: String? = null): String {
         val encodedDir = directory?.let { java.net.URLEncoder.encode(it, "UTF-8") } ?: ""
         return "chat/$sessionId?directory=$encodedDir"
     }
     fun projectSessions(directory: String) = "project/${java.net.URLEncoder.encode(directory, "UTF-8")}"
+    fun terminal(directory: String? = null): String {
+        val encodedDir = directory?.let { java.net.URLEncoder.encode(it, "UTF-8") } ?: ""
+        return "terminal?directory=$encodedDir"
+    }
 }
 
 @Composable
@@ -181,6 +187,9 @@ fun OConnectorApp(
                     navController.navigate(Routes.chat(sessionId, directory))
                 },
                 onBack = { navController.popBackStack() },
+                onTerminalClick = { dir ->
+                    navController.navigate(Routes.terminal(dir))
+                },
             )
         }
 
@@ -213,6 +222,16 @@ fun OConnectorApp(
             HelpScreen(
                 onBack = { navController.popBackStack() },
                 updateViewModel = updateVm,
+            )
+        }
+
+        // === Terminal ===
+        composable(Routes.TERMINAL) { backStackEntry ->
+            val encodedDir = backStackEntry.arguments?.getString("directory") ?: ""
+            val directory = if (encodedDir.isNotBlank()) java.net.URLDecoder.decode(encodedDir, "UTF-8") else null
+            TerminalScreen(
+                directory = directory,
+                onBack = { navController.popBackStack() }
             )
         }
     }
