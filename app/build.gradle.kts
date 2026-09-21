@@ -14,13 +14,28 @@ android {
         applicationId = "com.opencode.remote"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.4.3"
+        versionCode = 11
+        versionName = "1.4.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }
 
+    signingConfigs {
+        // 固定调试证书（oconnector-debug.p12，自签入库）：CI 每次构建同签名，
+        // 手机可直接覆盖安装，不再因子证书不同被迫卸载。release 仍走默认。
+        create("fixedDebug") {
+            storeFile = file("oconnector-debug.p12")
+            storePassword = "oconnector-debug"
+            keyAlias = "oconnector"
+            keyPassword = "oconnector-debug"
+            storeType = "PKCS12"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("fixedDebug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

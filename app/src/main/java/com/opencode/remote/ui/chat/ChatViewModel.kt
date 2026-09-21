@@ -396,6 +396,20 @@ class ChatViewModel @Inject constructor(
                 if (!sessionAgent.isNullOrBlank()) {
                     selectAgent(sessionAgent)
                 }
+                // 新发现3：同样带出会话当前模型（只在无显式选择时播种，不覆盖用户选择）
+                val smProv = session.model?.providerID?.takeIf { it.isNotBlank() }
+                val smId = session.model?.resolvedModelID?.takeIf { it.isNotBlank() }
+                if (smProv != null && smId != null && _uiState.value.selection.committed.model == null) {
+                    val ref = ModelSelectionRef(smProv, smId)
+                    _uiState.update {
+                        it.copy(chatDisplay = it.chatDisplay.copy(
+                            selection = it.chatDisplay.selection.copy(
+                                committed = it.chatDisplay.selection.committed.copy(model = ref),
+                                draft = it.chatDisplay.selection.draft.copy(model = ref),
+                            ),
+                        ))
+                    }
+                }
                 _uiState.update {
                     it.copy(
                         sessionMeta = it.sessionMeta.copy(
@@ -1565,7 +1579,13 @@ class ChatViewModel @Inject constructor(
             val storedModel = connectionPreferences.getSelectedModel(sessionId)
             val variant = connectionPreferences.getSelectedVariant(sessionId)
             val model = storedModel?.let { ModelSelectionRef(it.providerId, it.modelId) }
-            val config = ChatSelectionConfig(agent = agent, model = model, variant = variant)
+            // 新发现3：合并而非替换——偏好为空时保留会话带出的值（否则 restore 把 session agent/model 洗成 auto）
+            val cur = _uiState.value.selection.committed
+            val config = ChatSelectionConfig(
+                agent = agent ?: cur.agent,
+                model = model ?: cur.model,
+                variant = variant ?: cur.variant,
+            )
             val normalized = normalizeSelectionConfig(config, _uiState.value.selection.availableModels, _uiState.value.availableAgents)
             _uiState.update {
                 it.copy(chatDisplay = it.chatDisplay.copy(
@@ -1587,16 +1607,19 @@ class ChatViewModel @Inject constructor(
         availableAgents: List<AgentInfo>,
     ): ChatSelectionConfig {
         var result = config
+        // 新发现3：列表为空 = 还没加载完，此时不校验（否则会话带出的值被洗成 auto）
+        val agentsLoaded = availableAgents.isNotEmpty()
+        val modelsLoaded = availableModels.isNotEmpty()
         // Validate agent
-        if (result.agent != null && result.agent !in availableAgents.map { it.name }) {
+        if (agentsLoaded && result.agent != null && result.agent !in availableAgents.map { it.name }) {
             result = result.copy(agent = null)
         }
         // Validate model
-        if (result.model != null && result.model !in availableModels.map { it.ref }) {
+        if (modelsLoaded && result.model != null && result.model !in availableModels.map { it.ref }) {
             result = result.copy(model = null, variant = null)
         }
         // Validate variant
-        if (result.variant != null) {
+        if (result.variant != null && result.model != null && modelsLoaded) {
             val modelVariants = availableModels.find { it.ref == result.model }?.variants.orEmpty()
             if (result.variant !in modelVariants) {
                 result = result.copy(variant = null)
@@ -1609,10 +1632,14 @@ class ChatViewModel @Inject constructor(
         config: ChatSelectionConfig,
         options: ChatSelectionUiState,
     ): ChatSelectionConfig {
-        val model = config.model?.takeIf { options.resolveModel(it) != null }
+        // 新发现3：列表为空 = 还没加载完，此时保留原值（否则会话带出的值被洗成 auto）
+        val model = if (options.availableModels.isEmpty()) config.model
+            else config.model?.takeIf { options.resolveModel(it) != null }
         val availableVariants = options.resolveModel(model)?.variants.orEmpty()
-        val variant = config.variant?.takeIf { it in availableVariants }
-        val agent = config.agent?.takeIf { it in options.availableAgents.map { a -> a.name } }
+        val variant = if (options.availableModels.isEmpty()) config.variant
+            else config.variant?.takeIf { it in availableVariants }
+        val agent = if (options.availableAgents.isEmpty()) config.agent
+            else config.agent?.takeIf { it in options.availableAgents.map { a -> a.name } }
         return config.copy(agent = agent, model = model, variant = variant)
     }
 
