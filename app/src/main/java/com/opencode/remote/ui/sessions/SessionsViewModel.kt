@@ -245,8 +245,12 @@ class SessionsViewModel @Inject constructor(
         }
     }
 
-    fun createSession(directory: String? = null) {
-        viewModelScope.launch {
+    /** 示踪：FAB 回调是否执行（走现有 error 通道显示，无新依赖）。 */
+    fun debugTap() {
+        _uiState.update { it.copy(error = "TAP " + System.currentTimeMillis()) }
+    }
+
+    fun createSession(directory: String? = null) {        viewModelScope.launch {
             _uiState.update { it.copy(isCreating = true, error = null) }
             try {
                 // 需求②：新会话默认主代理（v2 API 不传 agent 会落到 build，必须显式传）

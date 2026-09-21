@@ -408,7 +408,11 @@ fun ProjectSessionsScreen(
                 },
                 floatingActionButton = {
                     ExtendedFloatingActionButton(
-                        onClick = { viewModel.createSession(directory) },
+                        onClick = {
+                            // 示踪：回调是否执行。无此条即点击没进函数；有但无转圈即作用域已死
+                            viewModel.debugTap()
+                            viewModel.createSession(directory)
+                        },
                         icon = {
                             // 入口可见性：点下即转圈；若点的没反应（不转圈），点击没进函数
                             if (uiState.isCreating) {
