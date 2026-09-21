@@ -562,11 +562,11 @@ fun ChatScreen(
         }
 
         // Session diff dialog
-        if (uiState.showDiffDialog) {
+        if (uiState.chatDisplay.showDiffDialog) {
             DiffDialog(
                 title = s.diffTitle,
-                files = uiState.diffFiles,
-                isLoading = uiState.isLoadingDiff,
+                files = uiState.chatDisplay.diffFiles,
+                isLoading = uiState.chatDisplay.isLoadingDiff,
                 closeText = s.close,
                 emptyText = s.diffEmpty,
                 onDismiss = viewModel::closeDiffDialog,

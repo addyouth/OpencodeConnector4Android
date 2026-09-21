@@ -22,6 +22,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -249,7 +250,7 @@ class OConnectorApiClient @Inject constructor(
     suspend fun renameSession(id: String, title: String): SessionInfo {
         client.patch(fullUrl("/api/session/$id")) {
             expectSuccess = true
-            setBody(buildJsonObject { put("title", title) })
+            setBody(JsonObject(mapOf("title" to JsonPrimitive(title))))
         }
         return getSession(id)
     }
@@ -276,7 +277,7 @@ class OConnectorApiClient @Inject constructor(
     suspend fun moveSession(id: String, directory: String) {
         client.post(fullUrl("/api/session/$id/move")) {
             expectSuccess = true
-            setBody(buildJsonObject { put("directory", directory) })
+            setBody(JsonObject(mapOf("directory" to JsonPrimitive(directory))))
         }
     }
 

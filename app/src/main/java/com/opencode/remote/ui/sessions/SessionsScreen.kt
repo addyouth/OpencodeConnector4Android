@@ -348,6 +348,10 @@ fun ProjectSessionsScreen(
             .sortedByDescending { it.time?.updated ?: it.time?.created ?: 0L }
     }
 
+    // Rename / Move dialog targets (declared here: used by cards above AND dialogs below)
+    var renameTarget by remember { mutableStateOf<SessionInfo?>(null) }
+    var moveTarget by remember { mutableStateOf<SessionInfo?>(null) }
+
     // Outer Box with swipe gesture detection for memo panel
     Box(
         modifier = Modifier
@@ -621,7 +625,6 @@ fun ProjectSessionsScreen(
                     )
 
                     // Rename dialog
-                    var renameTarget by remember { mutableStateOf<SessionInfo?>(null) }
                     var renameText by remember(renameTarget) { mutableStateOf(renameTarget?.title ?: "") }
                     renameTarget?.let { target ->
                         AlertDialog(
@@ -648,7 +651,6 @@ fun ProjectSessionsScreen(
                     }
 
                     // Move dialog (pick target project directory)
-                    var moveTarget by remember { mutableStateOf<SessionInfo?>(null) }
                     moveTarget?.let { target ->
                         val dirs = remember { viewModel.projectDirectories() }
                         AlertDialog(
