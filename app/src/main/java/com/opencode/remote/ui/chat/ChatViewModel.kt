@@ -131,6 +131,13 @@ data class ChatDisplayState(
     val shellCommand: String = "",
     val shellOutput: String = "",
     val isRunningShell: Boolean = false,
+    // agent 详情 / vcs 状态
+    val showAgentDetail: Boolean = false,
+    val agentDetail: AgentInfo? = null,
+    val isLoadingAgentDetail: Boolean = false,
+    val showVcsDialog: Boolean = false,
+    val vcsFiles: List<FileDiffInfo> = emptyList(),
+    val isLoadingVcs: Boolean = false,
 )
 
 data class ChatUiState(
