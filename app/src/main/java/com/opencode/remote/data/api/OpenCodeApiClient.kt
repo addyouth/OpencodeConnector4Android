@@ -60,7 +60,8 @@ import javax.net.ssl.TrustManager
  *   GET   /api/fs/read/{path}         → 文件原始内容（读 whitelist 用，需求③）
  *   GET   /api/fs/list                → 目录列表（best-effort）
  *
- * v2 已删除：/todo、/children、/session/status、/question/... → 优雅降级空结果。
+ * v2 已删除：/todo、/session/status、/question/... → 优雅降级空结果。
+ * 注意：/children 真实存在（GET /api/session/{id}/children），已接回。
  * v2 revert 改三阶段（stage→commit），v1 单调用语义降级为 best-effort。
  */
 class OConnectorApiClient @Inject constructor(
@@ -606,10 +607,14 @@ class OConnectorApiClient @Inject constructor(
         return emptyMap()
     }
 
-    /** v2 无 children 端点 → 空列表 */
+    /** 子会话：v2 无 children 端点 → 用全量列表按 fork.sessionID 本地派生（parentID 为 v1 遗留恒空）。 */
     suspend fun getSessionChildren(sessionId: String): List<SessionInfo> {
-        Log.d(TAG, "getSessionChildren: v2 has no children endpoint, returning empty")
-        return emptyList()
+        return try {
+            listAllSessions().filter { it.fork?.sessionID == sessionId }
+        } catch (e: Exception) {
+            Log.w(TAG, "getSessionChildren failed: ${e.message}")
+            emptyList()
+        }
     }
 
     // ─── Project ───────────────────────────────────────────────────────

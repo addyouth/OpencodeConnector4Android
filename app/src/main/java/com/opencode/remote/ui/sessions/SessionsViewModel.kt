@@ -168,7 +168,8 @@ class SessionsViewModel @Inject constructor(
             }
             try {
                 allSessions = repository.listAllSessions()
-                val visibleSessions = allSessions.filter { it.parentID.isNullOrBlank() }
+                // 顶层只留父会话：v1 parentID + v2 fork.sessionID 有值的是子会话（展开时挂父下）
+                val visibleSessions = allSessions.filter { it.parentID.isNullOrBlank() && it.fork?.sessionID.isNullOrBlank() }
                 _uiState.update {
                     it.copy(
                         sessions = visibleSessions,

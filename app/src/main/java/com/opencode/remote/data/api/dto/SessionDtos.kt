@@ -30,6 +30,8 @@ data class SessionInfo(
     val time: SessionTime? = null,
     /** Revert state — non-null when the session has an active undo. */
     val revert: SessionRevert? = null,
+    /** v2 fork 链：子会话带 fork.sessionID 指向父（parentID 为 v1 遗留，v2 为空）。 */
+    val fork: SessionForkRef? = null,
     // ─── v2 新增字段 ───
     /** v2 Session.Info.agent —— 会话当前 agent 名（需求②「进会话带主代理」的数据源） */
     val agent: String? = null,
@@ -45,6 +47,13 @@ data class SessionInfo(
     /** 兼容属性：v2 下 directory = location.directory */
     val resolvedDirectory: String? get() = directory ?: location?.directory
 }
+
+/** v2 fork 引用：{sessionID(父), boundary?} */
+@Serializable
+data class SessionForkRef(
+    @SerialName("sessionID")
+    val sessionID: String? = null,
+)
 
 @Serializable
 data class SessionLocation(
