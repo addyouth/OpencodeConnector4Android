@@ -280,6 +280,8 @@ class OConnectorApiClient @Inject constructor(
             catch (e: Exception) { Log.w(TAG, "switchModel before prompt failed: ${e.message}") }
         }
         client.post(fullUrl("/api/session/$sessionId/prompt")) {
+            // 卡死不再静默：非 2xx 直接抛，UI 第一秒报错而不是转到天荒地老
+            expectSuccess = true
             setBody(V2PromptBody(text = text, agents = agent?.let { listOf(it) }))
         }
     }

@@ -1133,6 +1133,12 @@ class ChatViewModel @Inject constructor(
     fun sendMessage() {
         val text = _uiState.value.inputText.trim()
         if (text.isEmpty()) return
+        // 空会话 id 直接拦：否则 POST 到垃圾 URL（404 被静默吞掉）+ 永远等不到事件
+        if (_uiState.value.sessionId.isBlank()) {
+            val s0 = com.opencode.remote.ui.strings.AppLocale.strings
+            _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(error = s0.errSendFailed.replace("%s", "empty session id"))) }
+            return
+        }
         // Allow sending during recoveryPending — user is resuming an interrupted conversation
         if (_uiState.value.isBlocked && !_uiState.value.recoveryPending) return
         // P2 离线队列：无网时存草稿（带当前选定），重连自动发出

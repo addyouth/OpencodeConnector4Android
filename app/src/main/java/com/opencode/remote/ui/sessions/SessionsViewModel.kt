@@ -252,6 +252,8 @@ class SessionsViewModel @Inject constructor(
                 // 需求②：新会话默认主代理（v2 API 不传 agent 会落到 build，必须显式传）
                 val defaultAgent = defaultPrimaryAgentId()
                 val response = repository.createSession(directory, defaultAgent)
+                // 空 id 直接抛：否则跳进幽灵会话（发也白发，重进空白）
+                if (response.id.isBlank()) throw IllegalStateException("server returned empty session id")
                 loadSessions()
                 _uiState.update { it.copy(isCreating = false) }
                 _creationEvents.emit(response.id)
