@@ -118,14 +118,19 @@ internal fun QuestionAskBubble(
                         FilterChip(
                             selected = isSelected,
                             onClick = {
-                                val newSet = if (question.multiple) {
-                                    if (isSelected) selectedOptions - option.label
+                                if (question.multiple) {
+                                    val newSet = if (isSelected) selectedOptions - option.label
                                     else selectedOptions + option.label
+                                    selectedOptionsList[currentIndex].value = newSet
                                 } else {
-                                    // 单选再点已选项 = 取消（之前点死解不掉）
-                                    if (isSelected) emptySet() else setOf(option.label)
+                                    // 单选互斥：再点已选项=取消；选新项=清空自定义输入
+                                    if (isSelected) {
+                                        selectedOptionsList[currentIndex].value = emptySet()
+                                    } else {
+                                        selectedOptionsList[currentIndex].value = setOf(option.label)
+                                        customAnswerList[currentIndex].value = ""
+                                    }
                                 }
-                                selectedOptionsList[currentIndex].value = newSet
                             },
                             label = {
                                 Column {
@@ -150,7 +155,13 @@ internal fun QuestionAskBubble(
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = customAnswer,
-                    onValueChange = { customAnswerList[currentIndex].value = it },
+                    onValueChange = {
+                        customAnswerList[currentIndex].value = it
+                        // 单选互斥：打字自动消选项（多选可与选项共存）
+                        if (it.isNotBlank() && !question.multiple) {
+                            selectedOptionsList[currentIndex].value = emptySet()
+                        }
+                    },
                     placeholder = { Text(s.questionCustomPlaceholder) },
                     modifier = Modifier.fillMaxWidth(),
                     maxLines = 3,
