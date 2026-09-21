@@ -3,6 +3,7 @@ package com.opencode.remote.data.api
 import android.util.Log
 import android.util.Base64
 import com.opencode.remote.data.api.dto.*
+import com.opencode.remote.ui.chat.PermissionRequestData
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
 import io.ktor.client.plugins.*
@@ -312,6 +313,34 @@ class OConnectorApiClient @Inject constructor(
             setBody(V2PermissionReplyBody(reply = reply, message = message))
         }
         Log.d(TAG, "Permission reply: $reply for request=$requestId session=$sessionId")
+    }
+
+    /**
+     * v2 #8: GET /api/session/{sessionID}/permission → {data: [Permission.Request]}.
+     * v2 无 permission.asked SSE（spec 无此事件），桌面端同样靠轮询此路由；
+     * 手机轮询：有挂起即弹已有确认气泡。字段映射 action→permission、resources→patterns、save→always。
+     */
+    suspend fun listPendingPermissions(sessionId: String): List<PermissionRequestData> {
+        return try {
+            val el = getJson("/api/session/$sessionId/permission") {}
+            val arr = (el as? JsonObject)?.get("data") as? JsonArray ?: return emptyList()
+            arr.mapNotNull { item ->
+                try {
+                    val o = item.jsonObject
+                    PermissionRequestData(
+                        id = o.string("id") ?: return@mapNotNull null,
+                        sessionID = o.string("sessionID") ?: sessionId,
+                        permission = o.string("action") ?: "unknown",
+                        patterns = o["resources"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList(),
+                        always = o["save"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList(),
+                        tool = null,
+                    )
+                } catch (e: Exception) { Log.w(TAG, "Bad permission item $item", e); null }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "listPendingPermissions failed: ${e.message}")
+            emptyList()
+        }
     }
 
     /** v2 已无 /question/{id}/reply —— no-op 降级 */

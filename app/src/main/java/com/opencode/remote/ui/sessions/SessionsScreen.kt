@@ -78,7 +78,7 @@ fun SessionsScreen(
                     Column {
                         Text(s.projects)
                         val subtitle = uiState.currentServerName
-                            ?: uiState.projectName?.let { "${s.serverPath}: $it" }
+                            ?: uiState.projectName?.let { "${s.serverPath}: ${it.replace('\\', '/').substringAfterLast('/')}" }
                         subtitle?.let {
                             Text(
                                 text = it,

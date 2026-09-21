@@ -190,11 +190,14 @@ class ChatViewModel @Inject constructor(
     private var batchFlushJob: Job? = null  // debounce job for 16ms coalescing window
     /** Queue of permission requests that arrived while another permission is being handled. */
     private val permissionQueue = mutableListOf<PermissionRequestData>()
+    /** #8 权限轮询任务（v2 无 permission SSE，turn 中 5s 一次，有挂起即弹气泡）。 */
+    private var permissionPollJob: Job? = null
 
     companion object {
         private const val TAG = "ChatViewModel"
         private const val MAX_STREAMING_TEXT = 10_000
         private const val TODO_COMPLETED_NOTIFICATION_ID = 2001
+        private const val PERMISSION_NOTIFICATION_ID = 2002
     }
 
     /**
@@ -513,6 +516,7 @@ class ChatViewModel @Inject constructor(
         when (event.payload.type) {
             // ── Streaming text delta (incremental) ──
             "message.part.delta" -> {
+                ensurePermissionPoll()
                 val chunk = props.delta
                 if (chunk != null) {
                     Log.w(TAG, "SSE DIAG: delta field=${props.field} partID=${props.partID?.take(8)} chunkLen=${chunk.length} chunk='${chunk.take(30).replace("\n","\\n")}'")
@@ -802,6 +806,7 @@ class ChatViewModel @Inject constructor(
             // session.status is used only for metadata refresh.
             "session.status" -> {
                 loadSessionInfo()
+                ensurePermissionPoll()
             }
 
             // ── Todo events ──
@@ -1690,8 +1695,62 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    /** Advance to the next queued permission, or clear blocked state if queue is empty. */
-    private fun advancePermission() {
+    /**
+     * v2 #8 权限轮询：turn 中每 5s 查一次挂起确认（v2 无 permission SSE 事件）。
+     * 安静期（不 streaming/sending、无挂起、无排队）自动退出，不耗电。
+     */
+    private fun ensurePermissionPoll() {
+        if (permissionPollJob?.isActive == true) return
+        permissionPollJob = viewModelScope.launch {
+            while (isActive) {
+                delay(5_000)
+                val s = _uiState.value
+                if (!s.isStreaming && !s.isSending && s.pendingPermission == null && permissionQueue.isEmpty()) break
+                pollPermissionsOnce()
+            }
+        }
+    }
+
+    private fun pollPermissionsOnce() {
+        val sid = _uiState.value.sessionId
+        if (sid.isBlank()) return
+        viewModelScope.launch {
+            try {
+                val fresh = repository.pollPermissions(sid)
+                    .filter { it.id != _uiState.value.pendingPermission?.id }
+                    .filter { f -> permissionQueue.none { it.id == f.id } }
+                if (fresh.isEmpty()) return@launch
+                Log.d(TAG, "Permission poll: ${fresh.size} pending")
+                val first = fresh.first()
+                if (_uiState.value.pendingPermission != null) {
+                    permissionQueue.addAll(fresh)
+                } else {
+                    _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(
+                        pendingPermission = first, isBlocked = true,
+                    ))}
+                    repository.saveBlockingState(sid, first, _uiState.value.pendingQuestion)
+                    startBlockingWatchdog()
+                    if (fresh.size > 1) permissionQueue.addAll(fresh.drop(1))
+                    showPermissionNotification(first)
+                }
+            } catch (e: Exception) { Log.w(TAG, "pollPermissions failed: ${e.message}") }
+        }
+    }
+
+    private fun showPermissionNotification(req: PermissionRequestData) {
+        try {
+            val nm = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val n = android.app.Notification.Builder(appContext, OConnectorApp.CHANNEL_ID_COMPLETION)
+                .setContentTitle("需要确认：${req.permission}")
+                .setContentText(req.patterns.take(2).joinToString(", ").ifEmpty { req.sessionID })
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setAutoCancel(true)
+                .build()
+            nm.notify(PERMISSION_NOTIFICATION_ID, n)
+        } catch (e: Exception) { Log.w(TAG, "permission notify failed", e) }
+    }
+
+    /** Advance to the next queued permission, or clear blocked state if queue is empty. */    private fun advancePermission() {
         if (permissionQueue.isNotEmpty()) {
             val next = permissionQueue.removeAt(0)
             Log.d(TAG, "Advancing to queued permission: ${next.id}, remaining: ${permissionQueue.size}")

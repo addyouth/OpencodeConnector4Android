@@ -71,6 +71,8 @@ interface OConnectorRepository {
     // ─── Permission / Question Replies ──────────────────────────────
 
     suspend fun replyPermission(requestId: String, reply: String, message: String? = null, directory: String? = null, sessionId: String? = null)
+    /** v2 #8 轮询挂起的权限确认（无 permission SSE 事件，桌面端同样轮询）。 */
+    suspend fun pollPermissions(sessionId: String): List<PermissionRequestData>
     suspend fun replyQuestion(requestId: String, answers: List<List<String>>, directory: String? = null)
     suspend fun rejectQuestion(requestId: String, directory: String? = null)
 
@@ -429,6 +431,9 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     override suspend fun replyPermission(requestId: String, reply: String, message: String?, directory: String?, sessionId: String?) =
         requireClient().replyPermission(requestId, reply, message, directory, sessionId)
+
+    override suspend fun pollPermissions(sessionId: String): List<PermissionRequestData> =
+        requireClient().listPendingPermissions(sessionId)
 
     override suspend fun replyQuestion(requestId: String, answers: List<List<String>>, directory: String?) =
         requireClient().replyQuestion(requestId, answers, directory)
