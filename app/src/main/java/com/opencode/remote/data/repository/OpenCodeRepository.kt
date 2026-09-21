@@ -97,7 +97,8 @@ interface OConnectorRepository {
 
     // ─── Agents ─────────────────────────────────────────────────────────
 
-    suspend fun listAgents(): List<AgentInfo>
+    /** 项目级 agent：directory 透给 /api/agent location[directory]（如 02.写作取 writ-assist），null 则 serve 默认目录。 */
+    suspend fun listAgents(directory: String? = null): List<AgentInfo>
     fun getCachedAgents(): List<AgentInfo>
 
     // ─── Files ──────────────────────────────────────────────────────────
@@ -174,6 +175,7 @@ class OConnectorRepositoryImpl @Inject constructor(
     private var connected = false
     private var cachedAgents: List<AgentInfo>? = null
     private var agentsCacheTime: Long = 0
+    private var cachedAgentsDir: String? = null
     private var cachedModels: List<ModelInfo>? = null
     private var modelsCacheTime: Long = 0
     private var activeServerId: String? = null
@@ -367,6 +369,7 @@ class OConnectorRepositoryImpl @Inject constructor(
         cachedAgents = null
         cachedModels = null
         agentsCacheTime = 0
+        cachedAgentsDir = null
         modelsCacheTime = 0
         activeSessionId = null
         activeSessionDirectory = null
@@ -464,14 +467,16 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     // ─── Agents ─────────────────────────────────────────────────────────
 
-    override suspend fun listAgents(): List<AgentInfo> {
-        // Return cache if valid (within 30s TTL)
-        if (cachedAgents != null && System.currentTimeMillis() - agentsCacheTime < 30_000) {
+    override suspend fun listAgents(directory: String?): List<AgentInfo> {
+        // Return cache if valid (within 30s TTL) AND same directory (per-project agents differ)
+        if (cachedAgents != null && cachedAgentsDir == directory &&
+            System.currentTimeMillis() - agentsCacheTime < 30_000) {
             return cachedAgents!!
         }
-        val agents = requireClient().listAgents()
+        val agents = requireClient().listAgents(directory)
             .filter { it.mode != "subagent" && it.hidden != true }
         cachedAgents = agents
+        cachedAgentsDir = directory
         agentsCacheTime = System.currentTimeMillis()
         return agents
     }

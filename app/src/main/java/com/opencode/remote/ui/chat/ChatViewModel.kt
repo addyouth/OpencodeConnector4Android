@@ -430,7 +430,13 @@ class ChatViewModel @Inject constructor(
     fun loadAgents() {
         viewModelScope.launch {
             try {
-                val agents = repository.listAgents()
+                // Per-project agents: resolve current session directory so e.g. 02.写作
+                // sessions list writ-assist instead of Vault defaults.
+                val dir = try {
+                    val sid = _uiState.value.sessionId
+                    if (sid.isBlank()) null else repository.getSession(sid, null)?.directory
+                } catch (_: Exception) { null }
+                val agents = repository.listAgents(dir)
                 _uiState.update {
                     it.copy(chatDisplay = it.chatDisplay.copy(
                         availableAgents = agents,

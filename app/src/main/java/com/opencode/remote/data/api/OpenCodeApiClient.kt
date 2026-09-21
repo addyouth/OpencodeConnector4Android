@@ -381,10 +381,12 @@ class OConnectorApiClient @Inject constructor(
 
     // ─── Agents ─────────────────────────────────────────────────────────
 
-    /** GET /api/agent → {location, data: [Agent.Info]} */
+    /** GET /api/agent → {location, data: [Agent.Info]}；directory 透给 location[directory] 取项目级 agent（如 02.写作的 writ-assist），null 则沿用 serve 默认目录。 */
     @OptIn(ExperimentalSerializationApi::class)
-    suspend fun listAgents(): List<AgentInfo> {
-        val el = getJson("/api/agent") {}
+    suspend fun listAgents(directory: String? = null): List<AgentInfo> {
+        val el = getJson("/api/agent") {
+            if (!directory.isNullOrEmpty()) parameter("location[directory]", directory)
+        }
         return el.decodeDataList<AgentInfo>()
     }
 
@@ -445,32 +447,42 @@ class OConnectorApiClient @Inject constructor(
     suspend fun readModelWhitelist(): Set<String> {
         return try {
             val config = getJson("/api/config") {}.jsonArray
-            val docPath = config.firstNotNullOfOrNull { item ->
+            val docPaths = config.mapNotNull { item ->
                 val obj = item.jsonObject
                 if (obj.string("type") == "document") {
                     val p = obj.string("path")
                     val base = p?.substringAfterLast('\\')?.substringAfterLast('/')
-                    // 优先 opencode.json，其次任意 .json/.jsonc
-                    if (base == "opencode.json" || base == "opencode.jsonc") p
-                    else if (base?.endsWith(".json") == true || base?.endsWith(".jsonc") == true) p
-                    else null
+                    // 任意 .json/.jsonc（含 opencode.json 与 mirror）
+                    if (base?.endsWith(".json") == true || base?.endsWith(".jsonc") == true) p else null
                 } else null
-            } ?: return emptySet()
-
-            val raw = client.get(fullUrl("/api/fs/read/${encPath(docPath)}")) {}.bodyAsText()
-            val root = json.parseToJsonElement(raw).jsonObject
-            val providers = root["provider"]?.jsonObject ?: return emptySet()
+            }
+            // mirror 候选：每个文档同目录下的 opencode-whitelist.mirror.json（Vault 内必 200；
+            // 全局 opencode.json 在 cwd 外会 500，逐个跳过）
+            val mirrorPaths = docPaths.mapNotNull { p ->
+                val sep = maxOf(p.lastIndexOf('\\'), p.lastIndexOf('/'))
+                if (sep < 0) null else p.substring(0, sep + 1) + "opencode-whitelist.mirror.json"
+            }.distinct()
 
             val out = mutableSetOf<String>()
-            providers.forEach { (providerId, cfg) ->
-                val whitelist = cfg.jsonObject["whitelist"]?.jsonArray ?: return@forEach
-                whitelist.forEach { entry ->
-                    val modelId = entry.jsonPrimitive.contentOrNull ?: return@forEach
-                    out.add("$providerId/$modelId")
-                    out.add(modelId)
+            for (path in (docPaths + mirrorPaths).distinct()) {
+                try {
+                    val raw = client.get(fullUrl("/api/fs/read/${encPath(path)}")) {}.bodyAsText()
+                    val root = json.parseToJsonElement(raw).jsonObject
+                    val providers = root["provider"]?.jsonObject ?: continue
+                    providers.forEach { (providerId, cfg) ->
+                        val whitelist = cfg.jsonObject["whitelist"]?.jsonArray ?: return@forEach
+                        whitelist.forEach { entry ->
+                            val modelId = entry.jsonPrimitive.contentOrNull ?: return@forEach
+                            out.add("$providerId/$modelId")
+                            out.add(modelId)
+                        }
+                    }
+                    Log.d(TAG, "Whitelist merged ${out.size} entries so far from $path")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Whitelist skip $path: ${e.message}")
                 }
             }
-            Log.d(TAG, "Whitelist loaded: ${out.size} entries from $docPath")
+            Log.d(TAG, "Whitelist loaded: ${out.size} entries total")
             out
         } catch (e: Exception) {
             Log.w(TAG, "readModelWhitelist failed (fallback: no filtering): ${e.message}")
