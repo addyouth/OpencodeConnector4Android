@@ -261,10 +261,11 @@ class OConnectorApiClient @Inject constructor(
         return getSession(id)
     }
 
-    /** POST /api/session/{id}/compact → 压缩上下文（长会话续命） */
+    /** POST /api/session/{id}/compact → 压缩上下文（长会话续命；body 必须给 {} 空对象）。 */
     suspend fun compactSession(id: String) {
         client.post(fullUrl("/api/session/$id/compact")) {
             expectSuccess = true
+            setBody(JsonObject(emptyMap()))
         }
     }
 

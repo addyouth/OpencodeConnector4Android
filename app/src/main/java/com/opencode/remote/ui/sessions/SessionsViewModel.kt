@@ -57,6 +57,8 @@ data class SessionsUiState(
     val worktreeProjectID: String? = null,
     val worktreeDirs: List<WorktreeInfo> = emptyList(),
     val isLoadingWorktrees: Boolean = false,
+    /** null=未查，false=非 git 仓库（禁用创建） */
+    val worktreeHasGit: Boolean? = null,
 )
 
 @HiltViewModel
@@ -363,11 +365,15 @@ class SessionsViewModel @Inject constructor(
 
     fun openWorktrees(directory: String) {
         viewModelScope.launch {
-            _uiState.update { it.copy(showWorktreeDialog = true, isLoadingWorktrees = true, worktreeDirs = emptyList()) }
+            _uiState.update { it.copy(showWorktreeDialog = true, isLoadingWorktrees = true, worktreeDirs = emptyList(), worktreeHasGit = null) }
             try {
                 val pid = projectIdForDirectory(directory)
                 val dirs = repository.listWorktrees(pid)
-                _uiState.update { it.copy(worktreeProjectID = pid, worktreeDirs = dirs, isLoadingWorktrees = false) }
+                // 非 git 仓库禁用创建（服务端会 400 source not found）
+                val hasGit = try {
+                    repository.listFiles(directory).any { it.displayName == ".git" && it.type == "directory" }
+                } catch (_: Exception) { true }
+                _uiState.update { it.copy(worktreeProjectID = pid, worktreeDirs = dirs, isLoadingWorktrees = false, worktreeHasGit = hasGit) }
             } catch (e: Exception) {
                 Log.e(TAG, "load worktrees failed", e)
                 val s = com.opencode.remote.ui.strings.AppLocale.strings

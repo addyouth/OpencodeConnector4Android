@@ -642,6 +642,8 @@ fun ProjectSessionsScreen(
                             branchHint = s.worktreeBranch,
                             nameHint = s.worktreeName,
                             closeText = s.close,
+                            needRepoText = s.worktreeNeedRepo,
+                            canCreate = uiState.worktreeHasGit != false,
                             onRefresh = viewModel::refreshWorktrees,
                             onCreate = viewModel::createWorktree,
                             onDelete = viewModel::removeWorktree,
@@ -741,6 +743,8 @@ private fun WorktreeDialog(
     branchHint: String,
     nameHint: String,
     closeText: String,
+    needRepoText: String,
+    canCreate: Boolean,
     onRefresh: () -> Unit,
     onCreate: (branch: String, name: String) -> Unit,
     onDelete: (directory: String) -> Unit,
@@ -801,6 +805,14 @@ private fun WorktreeDialog(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
+                if (!canCreate) {
+                    Text(
+                        text = needRepoText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
                 OutlinedTextField(
                     value = branch,
                     onValueChange = { branch = it },
@@ -827,7 +839,7 @@ private fun WorktreeDialog(
                     branch = ""
                     name = ""
                 },
-                enabled = branch.isNotBlank(),
+                enabled = canCreate && branch.isNotBlank(),
             ) { Text(branchHint) }
         },
         dismissButton = {

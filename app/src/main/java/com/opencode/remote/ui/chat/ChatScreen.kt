@@ -598,6 +598,22 @@ fun ChatScreen(
             )
         }
 
+        // Shell dialog
+        if (uiState.chatDisplay.showShellDialog) {
+            ShellDialog(
+                title = s.shellTitle,
+                command = uiState.chatDisplay.shellCommand,
+                output = uiState.chatDisplay.shellOutput,
+                isRunning = uiState.chatDisplay.isRunningShell,
+                inputPlaceholder = s.shellPlaceholder,
+                runText = s.selectionConfirm,
+                closeText = s.close,
+                onInputChange = viewModel::onShellInput,
+                onRun = viewModel::runShell,
+                onDismiss = viewModel::closeShellDialog,
+            )
+        }
+
         // Session diff dialog
         if (uiState.chatDisplay.showDiffDialog) {
             DiffDialog(
