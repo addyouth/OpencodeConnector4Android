@@ -150,11 +150,15 @@ fun ServerListScreen(
                 showUpdateDialog = false
                 if (avail.downloadUrl != null) {
                     val proxiedUrl = GitHubReleaseService.proxiedDownloadUrl(avail.downloadUrl)
-                    DownloadHelper.downloadApk(
+                    val fileName = "OConnector-v${avail.version}.apk"
+                    val id = DownloadHelper.downloadApk(
                         context,
                         proxiedUrl,
-                        "OConnector-v${avail.version}.apk"
+                        fileName
                     )
+                    // 下载完成自动调起安装（ApkInstallReceiver 按 id 认领）
+                    com.opencode.remote.data.download.UpdateDownloadTracker.lastDownloadId = id
+                    com.opencode.remote.data.download.UpdateDownloadTracker.lastFileName = fileName
                     Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
                 } else {
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(avail.releaseUrl))

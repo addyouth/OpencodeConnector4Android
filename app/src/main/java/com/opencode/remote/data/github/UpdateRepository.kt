@@ -9,7 +9,7 @@ class UpdateRepository @Inject constructor(
     private val gitHubService: GitHubReleaseService
 ) {
     suspend fun checkForUpdate(): Result<UpdateInfo> {
-        val result = gitHubService.listReleases("fangzx2001", "OpencodeConnector4Android")
+        val result = gitHubService.listReleases("addyouth", "OpencodeConnector4Android")
         return result.map { releases ->
             // Find the latest release with a pure version tag (skip PR/pre-release tags)
             val validRelease = releases

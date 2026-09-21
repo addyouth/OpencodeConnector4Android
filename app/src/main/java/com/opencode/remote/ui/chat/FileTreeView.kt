@@ -110,7 +110,7 @@ fun FileTreeView(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { onNavigateUp() }
+                                    .clickable { onNavigateUp?.invoke() }
                                     .padding(horizontal = 12.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {

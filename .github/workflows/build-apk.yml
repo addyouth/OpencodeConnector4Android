@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,3 +30,19 @@ jobs:
         with:
           name: oconnector-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      # 手机端应用内更新的数据源：每个版本发版（带 APK 附件），App 查 releases 比对。
+      - name: Read version
+        id: ver
+        run: echo "name=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)" >> $GITHUB_OUTPUT
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.name }}
+          name: OConnector v${{ steps.ver.outputs.name }}
+          files: app/build/outputs/apk/debug/*.apk
+          prerelease: true
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
