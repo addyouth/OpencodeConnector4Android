@@ -196,11 +196,10 @@ internal fun QuestionAskBubble(
                         val answers = questions.indices.mapNotNull { idx ->
                             val sel = selectedOptionsList[idx].value
                             val custom = customAnswerList[idx].value
-                            when {
-                                sel.isNotEmpty() -> sel.toList()
-                                custom.isNotBlank() -> listOf(custom)
-                                else -> null
-                            }
+                            // 选择 + 自定义合并（之前二选一，自定义会被吞）
+                            val merged = sel.toList() +
+                                (if (custom.isNotBlank() && !sel.contains(custom)) listOf(custom) else emptyList())
+                            if (merged.isNotEmpty()) merged else null
                         }
                         if (answers.isNotEmpty()) {
                             onReply(answers)

@@ -190,6 +190,43 @@ object V2SseTranslation {
                 ),
             )
 
+            // ── question.asked：v1 事件名沿用（schema 源头实锤），无则翻译层直通不了 ——
+            "question.asked" -> {
+                val qs = data["questions"]?.jsonArray?.mapNotNull { q ->
+                    try {
+                        val qo = q.jsonObject
+                        QuestionInfoDto(
+                            question = qo.string("question") ?: return@mapNotNull null,
+                            header = qo.string("header"),
+                            options = qo["options"]?.jsonArray?.mapNotNull { opt ->
+                                val oo = opt.jsonObject
+                                val label = oo.string("label") ?: return@mapNotNull null
+                                QuestionOptionDto(
+                                    label = label,
+                                    description = oo.string("description"),
+                                )
+                            } ?: emptyList(),
+                            multiple = qo["multiple"]?.jsonPrimitive?.booleanOrNull ?: false,
+                            custom = qo["custom"]?.jsonPrimitive?.booleanOrNull ?: true,
+                        )
+                    } catch (_: Exception) { null }
+                } ?: emptyList()
+                if (qs.isEmpty()) return null
+                val toolObj = data["tool"]?.jsonObject
+                ev(
+                    "question.asked",
+                    EventProperties(
+                        sessionID = sessionID,
+                        id = data.string("id"),
+                        questions = qs,
+                        tool = ToolRef(
+                            messageID = toolObj?.string("messageID"),
+                            callID = toolObj?.string("callID"),
+                        ),
+                    ),
+                )
+            }
+
             // ── 需要 UI 处理但 v2 无法完整对齐的（降级） ──
             "session.step.failed" -> {
                 val err = data["error"]?.jsonObject?.string("message")
