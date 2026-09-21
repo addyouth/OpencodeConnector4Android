@@ -37,6 +37,20 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.opencode.remote.data.api.dto.FileNode
 
+/** 文本预览白名单（二进制直接吐乱码，必须设防；图片以后走 Coil，另案）。 */
+private val PREVIEWABLE_EXTENSIONS = setOf(
+    "md", "markdown", "txt", "log",
+    "json", "jsonc", "yaml", "yml", "toml", "xml",
+    "html", "htm", "css", "js", "ts", "py",
+    "sh", "ps1", "bat", "cmd", "csv", "ini", "cfg",
+    "properties", "env", "gradle", "kt", "java", "c", "h",
+)
+
+internal fun isPreviewableFile(name: String): Boolean {
+    val ext = name.substringAfterLast('.', "").lowercase()
+    return ext.isNotEmpty() && ext in PREVIEWABLE_EXTENSIONS
+}
+
 @Composable
 fun FileTreeView(
     files: List<FileNode>,
@@ -133,7 +147,7 @@ fun FileTreeView(
                         val file = it
                         val fileName = file.displayName
                         val isDirectory = file.type == "directory"
-                        val isPreviewable = !isDirectory && (fileName.endsWith(".md") || fileName.endsWith(".txt"))
+                        val isPreviewable = !isDirectory && isPreviewableFile(fileName)
                         val isExpanded = expandedFilePath == file.path
 
                         Column {

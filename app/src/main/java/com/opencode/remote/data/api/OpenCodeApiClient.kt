@@ -110,6 +110,8 @@ class OConnectorApiClient @Inject constructor(
         private const val TAG = "OConnectorApiClient"
         /** Maximum number of messages to load from server. Prevents OOM on long sessions. */
         private const val MAX_MESSAGES = 50
+        /** 预览上限 200KB（与 UI 白名单配套）。 */
+        private const val MAX_PREVIEW_BODY = 200_000
     }
 
     // ─── 低层工具 ────────────────────────────────────────────────────────
@@ -819,7 +821,11 @@ class OConnectorApiClient @Inject constructor(
         val p = if (directory.isNullOrEmpty() || isAbsoluteFsPath(path)) path
         else directory.trimEnd('\\', '/') + "\\" + path.trimStart('\\', '/')
         val body = client.get(fullUrl("/api/fs/read/${encPath(p)}")) {}.bodyAsText()
-        return FileContent(type = "text", content = body)
+        // 服务端不分二进制文本照吐：超限截断注记，避免 MB 级文件卡死 UI
+        val text = if (body.length > MAX_PREVIEW_BODY) {
+            body.take(MAX_PREVIEW_BODY) + "\n…[预览截断，共 " + body.length + " 字]…"
+        } else body
+        return FileContent(type = "text", content = text)
     }
 
     private fun isAbsoluteFsPath(p: String): Boolean =

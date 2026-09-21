@@ -122,7 +122,8 @@ internal fun QuestionAskBubble(
                                     if (isSelected) selectedOptions - option.label
                                     else selectedOptions + option.label
                                 } else {
-                                    setOf(option.label)
+                                    // 单选再点已选项 = 取消（之前点死解不掉）
+                                    if (isSelected) emptySet() else setOf(option.label)
                                 }
                                 selectedOptionsList[currentIndex].value = newSet
                             },
