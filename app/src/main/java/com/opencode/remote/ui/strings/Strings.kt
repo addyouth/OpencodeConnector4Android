@@ -266,6 +266,7 @@ data class AppStrings(
     val selectionConfigure: String,
     val selectionConfirm: String,
     val selectionCancel: String,
+    val selectionDefaultSuffix: String,
     val copied: String,
 )
 
@@ -517,6 +518,7 @@ val enStrings = AppStrings(
     selectionConfigure = "Configure",
     selectionConfirm = "Confirm",
     selectionCancel = "Cancel",
+    selectionDefaultSuffix = " (default)",
     copied = "Copied",
 )
 
@@ -768,5 +770,6 @@ val zhStrings = AppStrings(
     selectionConfigure = "配置",
     selectionConfirm = "确认",
     selectionCancel = "取消",
+    selectionDefaultSuffix = "（默认）",
     copied = "已复制",
 )

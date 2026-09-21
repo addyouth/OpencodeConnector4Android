@@ -98,9 +98,11 @@ fun FileTreeView(
                             }
                         }
                     }
-                    items(files, key = { it.path }) { file ->
+                    items(files, key = { it.path }) {
+                        val file = it
+                        val fileName = file.displayName
                         val isDirectory = file.type == "directory"
-                        val isPreviewable = !isDirectory && (file.name.endsWith(".md") || file.name.endsWith(".txt"))
+                        val isPreviewable = !isDirectory && (fileName.endsWith(".md") || fileName.endsWith(".txt"))
                         val isExpanded = expandedFilePath == file.path
 
                         Column {
@@ -108,7 +110,7 @@ fun FileTreeView(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("file_item_${file.name}")
+                                    .testTag("file_item_${fileName}")
                                     .then(
                                         when {
                                             isDirectory -> Modifier.clickable { onNavigateToDirectory(file.path) }
@@ -131,7 +133,7 @@ fun FileTreeView(
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    text = file.name,
+                                    text = fileName,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = if (!isDirectory && !isPreviewable) Modifier.alpha(0.6f) else Modifier,

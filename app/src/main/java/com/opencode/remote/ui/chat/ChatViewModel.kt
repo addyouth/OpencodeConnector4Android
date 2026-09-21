@@ -224,7 +224,13 @@ class ChatViewModel @Inject constructor(
         lastSseEventTime = System.currentTimeMillis()
         _uiState.update {
             it.copy(
-                sessionMeta = it.sessionMeta.copy(sessionId = sessionId, sessionDirectory = directory),
+                sessionMeta = it.sessionMeta.copy(
+                    sessionId = sessionId,
+                    sessionDirectory = directory,
+                    // 跨会话必须清 revert：否则上个会话的 undo 锚点会把新会话的
+                    // local_* 乐观消息（'l'<'m' 恒成立）连同服务端消息一起滤掉
+                    revertMessageId = null,
+                ),
                 // Reset streaming + display state to prevent stale data from previous session
                 streaming = StreamingDisplayState(),
                 // NOTE: .copy() only overrides listed fields — blocking state is preserved
@@ -252,6 +258,7 @@ class ChatViewModel @Inject constructor(
         loadTodoList()
         loadAgents()
         loadModels()
+        loadServerDefaults()
 
         // Core init: load messages → check state → subscribe to SSE (sequential)
         viewModelScope.launch {
@@ -448,6 +455,21 @@ class ChatViewModel @Inject constructor(
                     showTodoCompletionNotification()
                 }
             } catch (e: Exception) { Log.w(TAG, "Failed to load todo list", e) }
+        }
+    }
+
+    /** 服务端生效默认值（auto 显示真名用，如 big-pickle（默认））。 */
+    fun loadServerDefaults() {
+        viewModelScope.launch {
+            try {
+                val (agent, model) = repository.getServerDefaults()
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(
+                    selection = it.chatDisplay.selection.copy(
+                        resolvedDefaultAgent = agent,
+                        resolvedDefaultModel = model,
+                    ),
+                ))}
+            } catch (e: Exception) { Log.w(TAG, "load server defaults failed", e) }
         }
     }
 

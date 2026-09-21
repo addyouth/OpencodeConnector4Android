@@ -3,6 +3,7 @@ package com.opencode.remote.data.api
 import android.util.Log
 import android.util.Base64
 import com.opencode.remote.data.api.dto.*
+import com.opencode.remote.ui.chat.ModelSelectionRef
 import com.opencode.remote.ui.chat.PermissionRequestData
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
@@ -343,6 +344,47 @@ class OConnectorApiClient @Inject constructor(
         }
     }
 
+    /**
+     * 服务端生效默认值（auto 解析成真名显示用）：model 取 /api/config 解析结果，
+     * agent 取 raw 配置 default_agent（解析结果里没有，Vault 内文件 fs/read 必 200）。
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun getServerDefaults(): Pair<String?, ModelSelectionRef?> {
+        return try {
+            val config = getJson("/api/config") {}.jsonArray
+            var agent: String? = null
+            var model: ModelSelectionRef? = null
+            for (item in config) {
+                val obj = item.jsonObject
+                if (obj.string("type") != "document") continue
+                val info = obj["info"]?.jsonObject
+                if (model == null && info != null) {
+                    val m = info["model"]?.jsonObject
+                    val p = m?.string("providerID")
+                    val id = m?.string("model") ?: m?.string("id")
+                    if (!p.isNullOrEmpty() && !id.isNullOrEmpty()) model = ModelSelectionRef(p, id)
+                }
+                if (agent == null) agent = info?.string("default_agent")
+                if (agent == null) {
+                    val p = obj.string("path")
+                    if (!p.isNullOrEmpty()) {
+                        try {
+                            val raw = client.get(fullUrl("/api/fs/read/${encPath(p)}")) {}.bodyAsText()
+                            agent = json.parseToJsonElement(raw).jsonObject.string("default_agent")
+                                ?.takeIf { it.isNotBlank() }
+                        } catch (_: Exception) {}
+                    }
+                }
+                if (agent != null && model != null) break
+            }
+            Log.d(TAG, "Server defaults: agent=$agent model=$model")
+            Pair(agent, model)
+        } catch (e: Exception) {
+            Log.w(TAG, "getServerDefaults failed: ${e.message}")
+            Pair(null, null)
+        }
+    }
+
     /** v2 已无 /question/{id}/reply —— no-op 降级 */
     suspend fun replyQuestion(requestId: String, answers: List<List<String>>, directory: String? = null) {
         Log.w(TAG, "replyQuestion not supported by v2 (request=$requestId)")
@@ -441,11 +483,16 @@ class OConnectorApiClient @Inject constructor(
         }
     }
 
-    /** GET /api/fs/read/{path} → 文件原始内容 */
+    /** GET /api/fs/read/{path} → 文件原始内容；相对路径按 directory 拼成绝对（v2 read 不认相对，404）。 */
     suspend fun readFileContent(path: String, directory: String? = null): FileContent {
-        val body = client.get(fullUrl("/api/fs/read/${encPath(path)}")) {}.bodyAsText()
+        val p = if (directory.isNullOrEmpty() || isAbsoluteFsPath(path)) path
+        else directory.trimEnd('\\', '/') + "\\" + path.trimStart('\\', '/')
+        val body = client.get(fullUrl("/api/fs/read/${encPath(p)}")) {}.bodyAsText()
         return FileContent(type = "text", content = body)
     }
+
+    private fun isAbsoluteFsPath(p: String): Boolean =
+        (p.length > 1 && p[1] == ':') || p.startsWith('/') || p.startsWith('\\')
 
     // ─── Config / Providers / Models（需求③核心） ────────────────────────
 

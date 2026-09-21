@@ -11,6 +11,7 @@ import com.opencode.remote.data.network.NetworkMonitor
 import com.opencode.remote.service.SseForegroundService
 import com.opencode.remote.ui.chat.ResponseSegment
 import com.opencode.remote.ui.chat.PermissionRequestData
+import com.opencode.remote.ui.chat.ModelSelectionRef
 import com.opencode.remote.ui.chat.QuestionRequestData
 import com.opencode.remote.data.datastore.ConnectionPreferences
 import com.opencode.remote.data.datastore.OfflineQueuedMessage
@@ -80,6 +81,8 @@ interface OConnectorRepository {
     suspend fun replyPermission(requestId: String, reply: String, message: String? = null, directory: String? = null, sessionId: String? = null)
     /** v2 #8 轮询挂起的权限确认（无 permission SSE 事件，桌面端同样轮询）。 */
     suspend fun pollPermissions(sessionId: String): List<PermissionRequestData>
+    /** 服务端生效默认值（auto 显示真名用）。 */
+    suspend fun getServerDefaults(): Pair<String?, ModelSelectionRef?>
 
     /** P2 离线队列：电梯/断流时存草稿，重连自动发出（带发送时选定的 agent/model）。 */
     suspend fun enqueueOffline(item: OfflineQueuedMessage)
@@ -504,6 +507,9 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     override suspend fun pollPermissions(sessionId: String): List<PermissionRequestData> =
         requireClient().listPendingPermissions(sessionId)
+
+    override suspend fun getServerDefaults(): Pair<String?, ModelSelectionRef?> =
+        try { requireClient().getServerDefaults() } catch (e: Exception) { Pair(null, null) }
 
     override suspend fun replyQuestion(requestId: String, answers: List<List<String>>, directory: String?) =
         requireClient().replyQuestion(requestId, answers, directory)

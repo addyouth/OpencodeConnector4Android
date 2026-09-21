@@ -64,8 +64,8 @@ data class AgentModel(
 }
 
 /**
- * 实际 API: GET /file?path=... 返回数组
- * 字段: name, path, absolute, type ("file"|"directory"), ignored
+ * 实际 API (v2): GET /api/fs/list → {data: [{path, type}]}（相对路径，无 name 字段）。
+ * name 本地派生（v1 /file 形状已废弃）。
  */
 @Serializable
 data class FileNode(
@@ -74,7 +74,12 @@ data class FileNode(
     val absolute: String = "",
     val type: String = "file",
     val ignored: Boolean = false,
-)
+) {
+    /** v2 只有 path（相对、反斜杠分隔）→ 文件名本地取最后一段 */
+    val displayName: String
+        get() = if (name.isNotEmpty()) name
+            else path.replace('\\', '/').substringAfterLast('/').ifEmpty { path }
+}
 
 /**
  * API response: GET /file/content?path=...

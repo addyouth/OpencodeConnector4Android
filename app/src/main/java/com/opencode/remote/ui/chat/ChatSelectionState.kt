@@ -45,6 +45,9 @@ data class ChatSelectionUiState(
     val availableModels: List<ModelSelectionOption> = emptyList(),
     val committed: ChatSelectionConfig = ChatSelectionConfig(),
     val draft: ChatSelectionConfig = ChatSelectionConfig(),
+    /** 服务端生效默认值（auto 时显示真名用，不参与提交语义）。 */
+    val resolvedDefaultAgent: String? = null,
+    val resolvedDefaultModel: ModelSelectionRef? = null,
 ) {
     /** Variants available for the currently drafted model. */
     val draftVariants: List<String>

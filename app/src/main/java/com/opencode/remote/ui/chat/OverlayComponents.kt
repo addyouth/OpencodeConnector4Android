@@ -228,7 +228,7 @@ internal fun ChatSelectionConfigDialog(
                     selectedOption = selection.draft.agent,
                     onOptionSelected = onAgentSelected,
                     autoLabel = s.selectionAuto,
-                    optionLabel = { it ?: s.selectionAuto },
+                    optionLabel = { it ?: (selection.resolvedDefaultAgent?.let { da -> "$da${s.selectionDefaultSuffix}" } ?: s.selectionAuto) },
                     optionSupportText = { opt ->
                         opt?.let { name ->
                             selection.availableAgents.find { it.name == name }?.description
@@ -246,11 +246,21 @@ internal fun ChatSelectionConfigDialog(
                     optionLabel = { opt ->
                         opt?.let { ref ->
                             selection.availableModels.find { it.ref == ref }?.displayLabel ?: ref.modelId
-                        } ?: s.selectionAuto
+                        } ?: (selection.resolvedDefaultModel?.let { dm ->
+                            (selection.resolveModel(dm)?.displayLabel
+                                ?: (dm.providerId + "/" + dm.modelId)) + s.selectionDefaultSuffix
+                        } ?: s.selectionAuto)
                     },
                     optionContent = { opt ->
                         if (opt == null) {
-                            Text(s.selectionAuto, style = MaterialTheme.typography.bodyMedium)
+                            val dm = selection.resolvedDefaultModel
+                            Text(
+                                dm?.let {
+                                    (selection.resolveModel(it)?.displayLabel
+                                        ?: (it.providerId + "/" + it.modelId)) + s.selectionDefaultSuffix
+                                } ?: s.selectionAuto,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
                         } else {
                             val model = selection.availableModels.find { it.ref == opt }
                             Column {
