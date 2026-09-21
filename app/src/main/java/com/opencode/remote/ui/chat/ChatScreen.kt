@@ -221,9 +221,13 @@ fun ChatScreen(
                 topBar = {
                     TopAppBar(
                         title = {
-                            Column(
-                                modifier = Modifier.weight(1f),
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                ) {
                                 Text(
                                     text = uiState.sessionTitle ?: s.sessionFallback,
                                     maxLines = 1,
@@ -238,6 +242,7 @@ fun ChatScreen(
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                }
                                 }
                             }
                         },
