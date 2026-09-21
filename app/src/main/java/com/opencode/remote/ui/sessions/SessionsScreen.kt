@@ -409,7 +409,17 @@ fun ProjectSessionsScreen(
                 floatingActionButton = {
                     ExtendedFloatingActionButton(
                         onClick = { viewModel.createSession(directory) },
-                        icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                        icon = {
+                            // 入口可见性：点下即转圈；若点的没反应（不转圈），点击没进函数
+                            if (uiState.isCreating) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                            } else {
+                                Icon(Icons.Default.Add, contentDescription = null)
+                            }
+                        },
                         text = { Text(s.newSession) },
                         expanded = projectSessions.isEmpty(),
                     )
