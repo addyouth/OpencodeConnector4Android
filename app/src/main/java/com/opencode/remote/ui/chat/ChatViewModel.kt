@@ -1592,7 +1592,8 @@ class ChatViewModel @Inject constructor(
     fun navigateUp() {
         val current = _uiState.value.currentFilePath
         if (current == "." || current.isEmpty()) return
-        val parent = current.substringBeforeLast("/", ".")
+        // 服务端回反斜杠路径，按两种分隔符取父级（否则 02.写作\子目录 永远上不去）
+        val parent = current.replace('\\', '/').substringBeforeLast("/", ".")
         navigateToDirectory(parent)
     }
 
@@ -1777,6 +1778,8 @@ class ChatViewModel @Inject constructor(
                 ),
             ))
         }
+        // 开窗即刷新服务端默认值（初始化时的异步加载可能还没回来，先看到 auto）
+        loadServerDefaults()
     }
 
     fun dismissSelectionDialog() {

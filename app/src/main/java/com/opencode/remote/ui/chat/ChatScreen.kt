@@ -221,7 +221,9 @@ fun ChatScreen(
                 topBar = {
                     TopAppBar(
                         title = {
-                            Column {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                            ) {
                                 Text(
                                     text = uiState.sessionTitle ?: s.sessionFallback,
                                     maxLines = 1,
@@ -231,6 +233,8 @@ fun ChatScreen(
                                 uiState.sessionStatus?.let { status ->
                                     Text(
                                         text = status,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )

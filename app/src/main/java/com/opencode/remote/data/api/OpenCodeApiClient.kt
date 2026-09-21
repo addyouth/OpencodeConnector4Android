@@ -793,7 +793,11 @@ class OConnectorApiClient @Inject constructor(
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun listFiles(path: String, directory: String? = null): List<FileNode> {
         return try {
-            val el = getJson("/api/fs/list") { parameter("path", path) }
+            val el = getJson("/api/fs/list") {
+                parameter("path", path)
+                // 否则 "." 永远解析到 serve cwd（Vault 根），写作会话左滑看到的是 Vault
+                if (!directory.isNullOrEmpty()) parameter("location[directory]", directory)
+            }
             val arr = when {
                 el is JsonObject && el["data"] is JsonArray -> el["data"] as JsonArray
                 el is JsonArray -> el

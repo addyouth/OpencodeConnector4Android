@@ -291,17 +291,6 @@ internal fun ChatSelectionConfigDialog(
                     },
                 )
 
-                // Agent 详情入口（零新字符串：按钮文案即 agent 名）
-                val detailAgentName = selection.draft.agent
-                    ?: selection.committed.agent
-                    ?: selection.resolvedDefaultAgent
-                if (detailAgentName != null) {
-                    TextButton(
-                        onClick = onAgentInfo,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text(detailAgentName) }
-                }
-
                 // Model dropdown (two-line items)
                 SelectionDropdownRow(
                     label = s.selectionModel,
