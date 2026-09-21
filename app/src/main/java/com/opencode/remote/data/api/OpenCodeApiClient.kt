@@ -360,7 +360,7 @@ class OConnectorApiClient @Inject constructor(
             return
         }
         client.post(fullUrl("/api/session/$sessionId/permission/$requestId/reply")) {
-            setBody(V2PermissionReplyBody(reply = reply, message = message))
+            setBody(V2PermissionReplyBody(decision = reply, message = message))
         }
         Log.d(TAG, "Permission reply: $reply for request=$requestId session=$sessionId")
     }
@@ -431,6 +431,18 @@ class OConnectorApiClient @Inject constructor(
         } catch (e: Exception) {
             Log.w(TAG, "getServerDefaults failed: ${e.message}")
             Pair(null, null)
+        }
+    }
+
+    /**
+     * v2 question 应答：暂走 permission 回复路由（call id 直传）。
+     * dev 版另有 /question 专属路由组，但 2.0.10 未挂载；若此路由 400 即回退 abort 解锁。
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun answerQuestion(sessionId: String, callId: String, answers: List<List<String>>) {
+        client.post(fullUrl("/api/session/$sessionId/permission/$callId/reply")) {
+            expectSuccess = true
+            setBody(QuestionReplyPayload(answers = answers))
         }
     }
 

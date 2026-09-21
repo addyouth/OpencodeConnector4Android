@@ -513,11 +513,16 @@ class OConnectorRepositoryImpl @Inject constructor(
     override suspend fun getServerDefaults(): Pair<String?, ModelSelectionRef?> =
         try { requireClient().getServerDefaults() } catch (e: Exception) { Pair(null, null) }
 
-    override suspend fun replyQuestion(requestId: String, answers: List<List<String>>, directory: String?) =
-        requireClient().replyQuestion(requestId, answers, directory)
+    override suspend fun replyQuestion(requestId: String, answers: List<List<String>>, directory: String?) {
+        val sid = activeSessionId ?: throw IllegalStateException("no active session")
+        requireClient().answerQuestion(sid, requestId, answers)
+    }
 
-    override suspend fun rejectQuestion(requestId: String, directory: String?) =
-        requireClient().rejectQuestion(requestId, directory)
+    override suspend fun rejectQuestion(requestId: String, directory: String?) {
+        // v2 无 question reject 路由 → 中止 turn 解锁（等价桌面“忽略”）
+        val sid = activeSessionId
+        if (sid != null) { try { requireClient().abortSession(sid, directory) } catch (_: Exception) {} }
+    }
 
     // ─── Todo ────────────────────────────────────────────────────────
 

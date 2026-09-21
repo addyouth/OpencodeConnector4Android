@@ -358,8 +358,10 @@ data class V2ModelSwitchBody(
 
 /** v2: POST /api/session/{sessionID}/permission/{requestID}/reply body */
 @Serializable
+/** v2: POST …/permission/{requestID}/reply body —— {decision: once|always|reject, message?}（字段名必须是 decision，reply 会 400）。 */
+@Serializable
 data class V2PermissionReplyBody(
-    val reply: String,
+    val decision: String,
     val message: String? = null,
 )
 

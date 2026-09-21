@@ -24,6 +24,14 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.delay
@@ -205,6 +213,7 @@ class ChatViewModel @Inject constructor(
         private const val MAX_STREAMING_TEXT = 10_000
         private const val TODO_COMPLETED_NOTIFICATION_ID = 2001
         private const val PERMISSION_NOTIFICATION_ID = 2002
+        private const val QUESTION_NOTIFICATION_ID = 2003
     }
 
     /**
@@ -1870,22 +1879,117 @@ class ChatViewModel @Inject constructor(
                 val fresh = repository.pollPermissions(sid)
                     .filter { it.id != _uiState.value.pendingPermission?.id }
                     .filter { f -> permissionQueue.none { it.id == f.id } }
-                if (fresh.isEmpty()) return@launch
-                Log.d(TAG, "Permission poll: ${fresh.size} pending")
-                val first = fresh.first()
-                if (_uiState.value.pendingPermission != null) {
-                    permissionQueue.addAll(fresh)
-                } else {
-                    _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(
-                        pendingPermission = first, isBlocked = true,
-                    ))}
-                    repository.saveBlockingState(sid, first, _uiState.value.pendingQuestion)
-                    startBlockingWatchdog()
-                    if (fresh.size > 1) permissionQueue.addAll(fresh.drop(1))
-                    showPermissionNotification(first)
+                if (fresh.isNotEmpty()) {
+                    Log.d(TAG, "Permission poll: ${fresh.size} pending")
+                    val first = fresh.first()
+                    if (_uiState.value.pendingPermission != null) {
+                        permissionQueue.addAll(fresh)
+                    } else {
+                        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(
+                            pendingPermission = first, isBlocked = true,
+                        ))}
+                        repository.saveBlockingState(sid, first, _uiState.value.pendingQuestion)
+                        startBlockingWatchdog()
+                        if (fresh.size > 1) permissionQueue.addAll(fresh.drop(1))
+                        showPermissionNotification(first)
+                    }
                 }
             } catch (e: Exception) { Log.w(TAG, "pollPermissions failed: ${e.message}") }
+            // question 检测同节拍（v2 无 question SSE/路由，从消息内容里找挂起的 question 工具调用）
+            try {
+                val q = detectPendingQuestion()
+                if (q != null && _uiState.value.pendingQuestion?.id != q.id) {
+                    Log.d(TAG, "Question detected: ${q.id}")
+                    _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(
+                        pendingQuestion = q, isBlocked = true,
+                    ))}
+                    repository.saveBlockingState(sid, _uiState.value.pendingPermission, q)
+                    startBlockingWatchdog()
+                    showQuestionNotification(q)
+                }
+            } catch (e: Exception) { Log.w(TAG, "detectPendingQuestion failed: ${e.message}") }
         }
+    }
+
+    /**
+     * v2 question 检测：最新 assistant 消息里的 question 工具调用，
+     * 有 input.questions、无 error、未完成即视为挂起（桌面端同源渲染）。
+     */
+    private suspend fun detectPendingQuestion(): QuestionRequestData? {
+        val sid = _uiState.value.sessionId
+        if (sid.isBlank()) return null
+        val dir = _uiState.value.sessionDirectory
+        val msgs = try { repository.getMessages(sid, dir, 8) } catch (e: Exception) { return null }
+        for (msg in msgs.asReversed()) {
+            if (msg.info.role != "assistant") continue
+            if (msg.info.finish == "error") continue
+            for (part in msg.parts.asReversed()) {
+                if (part.type != "tool" || part.tool != "question") continue
+                val callId = part.callID ?: continue
+                val st = part.state
+                val status = st?.status
+                if (status == "completed" || status == "error") continue
+                val questionsEl = try {
+                    st?.input?.jsonObject?.get("questions")?.jsonArray
+                } catch (_: Exception) { null } ?: continue
+                if (questionsEl.isEmpty()) continue
+                val qs = questionsEl.mapNotNull { parseQuestionInput(it) }
+                if (qs.isEmpty()) continue
+                return QuestionRequestData(
+                    id = callId,
+                    sessionID = sid,
+                    questions = qs,
+                    tool = ToolRef(part.messageID, callId),
+                )
+            }
+            break // 只看最新一条 assistant 消息，更早的已成定局
+        }
+        return null
+    }
+
+    private fun parseQuestionInput(el: JsonElement): QuestionInfoDto? {
+        return try {
+            val o = el.jsonObject
+            val q = o["question"]?.jsonPrimitive?.contentOrNull ?: return null
+            val header = o["header"]?.jsonPrimitive?.contentOrNull
+            val opts = o["options"]?.jsonArray?.mapNotNull { opt ->
+                when (opt) {
+                    is JsonObject -> {
+                        val label = opt["label"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                        QuestionOptionDto(
+                            label = label,
+                            description = opt["description"]?.jsonPrimitive?.contentOrNull,
+                        )
+                    }
+                    is JsonPrimitive -> opt.contentOrNull?.let { QuestionOptionDto(label = it) }
+                    else -> null
+                }
+            } ?: emptyList()
+            QuestionInfoDto(
+                question = q,
+                header = header,
+                options = opts,
+                multiple = o["multiple"]?.jsonPrimitive?.booleanOrNull ?: false,
+                custom = o["custom"]?.jsonPrimitive?.booleanOrNull ?: false,
+            )
+        } catch (_: Exception) { null }
+    }
+
+    private fun showQuestionNotification(req: QuestionRequestData) {
+        // P2：前台时气泡已可见，不再打扰
+        if (AppForegroundTracker.isForeground) return
+        try {
+            val nm = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val firstQ = req.questions.firstOrNull()?.question ?: req.id
+            val n = android.app.Notification.Builder(appContext, OConnectorApp.CHANNEL_ID_COMPLETION)
+                .setContentTitle("需要选择")
+                .setContentText(firstQ)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setAutoCancel(true)
+                .build()
+            nm.notify(QUESTION_NOTIFICATION_ID, n)
+            buzzOnce()
+        } catch (e: Exception) { Log.w(TAG, "question notify failed", e) }
     }
 
     private fun showPermissionNotification(req: PermissionRequestData) {
