@@ -7,7 +7,10 @@ import com.opencode.remote.ui.chat.ModelSelectionRef
 import com.opencode.remote.ui.chat.PermissionRequestData
 import com.opencode.remote.ui.chat.QuestionRequestData
 import io.ktor.client.*
+import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.*
+import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.core.readByteArray
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
@@ -817,8 +820,7 @@ class OConnectorApiClient @Inject constructor(
         }
     }
 
-    /** GET /api/fs/read/{path} → 文件原始内容；相对路径按 directory 拼成绝对（v2 read 不认相对，404）。 */
-    suspend fun readFileContent(path: String, directory: String? = null): FileContent {
+    /** GET /api/fs/read/{path} → 文件原始内容；相对路径按 directory 拼成绝对（v2 read 不认相对，404）。 */    suspend fun readFileContent(path: String, directory: String? = null): FileContent {
         val p = if (directory.isNullOrEmpty() || isAbsoluteFsPath(path)) path
         else directory.trimEnd('\\', '/') + "\\" + path.trimStart('\\', '/')
         val body = client.get(fullUrl("/api/fs/read/${encPath(p)}")) {}.bodyAsText()
@@ -831,6 +833,20 @@ class OConnectorApiClient @Inject constructor(
 
     private fun isAbsoluteFsPath(p: String): Boolean =
         (p.length > 1 && p[1] == ':') || p.startsWith('/') || p.startsWith('\\')
+
+    /** 相对路径按 directory 拼绝对（read/readBytes 共用）。 */
+    private fun resolveFsPath(path: String, directory: String?): String =
+        if (directory.isNullOrEmpty() || isAbsoluteFsPath(path)) path
+        else directory.trimEnd('\\', '/') + "\\" + path.trimStart('\\', '/')
+
+    /** GET /api/fs/read/{path} → 原始字节（图片/PDF/视频等二进制用，25MB 上限）。 */
+    suspend fun readFileBytes(path: String, directory: String? = null, maxBytes: Int = 25_000_000): ByteArray {
+        val p = resolveFsPath(path, directory)
+        // bodyAsChannel 绕过 ContentNegotiation（否则二进制会被当 JSON 解析炸掉）
+        val data = client.get(fullUrl("/api/fs/read/${encPath(p)}")) {}.bodyAsChannel().readRemaining().readByteArray()
+        if (data.size > maxBytes) throw IllegalStateException("file too large (${data.size} bytes)")
+        return data
+    }
 
     // ─── Config / Providers / Models（需求③核心） ────────────────────────
 

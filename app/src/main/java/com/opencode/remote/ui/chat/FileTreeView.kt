@@ -63,6 +63,7 @@ fun FileTreeView(
     expandedFileContent: String? = null,
     isLoadingFileContent: Boolean = false,
     onToggleFilePreview: ((FileNode) -> Unit)? = null,
+    onOpenFile: ((FileNode) -> Unit)? = null,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         // 返回行独立于空态：空目录也要能返回上级（之前埋在 else 里，空目录无返回键）
@@ -160,7 +161,7 @@ fun FileTreeView(
                                         when {
                                             isDirectory -> Modifier.clickable { onNavigateToDirectory(file.path) }
                                             isPreviewable -> Modifier.clickable { onToggleFilePreview?.invoke(file) }
-                                            else -> Modifier
+                                            else -> Modifier.clickable(enabled = onOpenFile != null) { onOpenFile?.invoke(file) }
                                         }
                                     )
                                     .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -181,7 +182,6 @@ fun FileTreeView(
                                     text = fileName,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = if (!isDirectory && !isPreviewable) Modifier.alpha(0.6f) else Modifier,
                                 )
                                 // Show expand/collapse indicator for previewable files
                                 if (isPreviewable) {

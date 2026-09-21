@@ -123,6 +123,9 @@ interface OConnectorRepository {
 
     /** shell 直调（跳过 AI）：发命令轮询取输出 */
     suspend fun runShell(sessionId: String, command: String): ShellResult
+    /** 二进制下载 + 系统应用打开 */
+    suspend fun readFileBytes(path: String, directory: String?): ByteArray
+    suspend fun openWithSystem(path: String, directory: String?): String
 
     /** worktree 真管理 */
     suspend fun listWorktrees(projectID: String): List<WorktreeInfo>
@@ -609,6 +612,33 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     override suspend fun runShell(sessionId: String, command: String): ShellResult =
         requireClient().runShell(sessionId, command)
+
+    override suspend fun readFileBytes(path: String, directory: String?): ByteArray =
+        requireClient().readFileBytes(path, directory)
+
+    /** 下载到缓存经 FileProvider 用系统应用打开（图片/PDF 走应用内，此处只管剩下的）。返回展示文案。 */
+    override suspend fun openWithSystem(path: String, directory: String?): String {
+        return try {
+            val data = requireClient().readFileBytes(path, directory)
+            val name = path.replace('\\', '/').substringAfterLast('/').ifEmpty { "file" }
+            val safe = name.replace(Regex("[^A-Za-z0-9._-]"), "_").takeLast(80)
+            val dir = java.io.File(context.cacheDir, "shared").apply { mkdirs() }
+            val file = java.io.File(dir, System.currentTimeMillis().toString() + "_" + safe)
+            file.writeBytes(data)
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", file
+            )
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, FileMediaTypes.mimeFor(name))
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(intent)
+            "已用系统应用打开"
+        } catch (e: Exception) {
+            Log.w(TAG, "openWithSystem failed", e)
+            "打开失败：" + (e.localizedMessage ?: e.javaClass.simpleName)
+        }
+    }
 
     override suspend fun listWorktrees(projectID: String): List<WorktreeInfo> =
         requireClient().listWorktrees(projectID)

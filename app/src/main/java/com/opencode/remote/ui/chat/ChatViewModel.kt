@@ -131,6 +131,15 @@ data class ChatDisplayState(
     val shellCommand: String = "",
     val shellOutput: String = "",
     val isRunningShell: Boolean = false,
+    // 媒体查看状态（图片应用内 / PDF 应用内 / 其余系统应用）
+    val showImageDialog: Boolean = false,
+    val imageBytes: ByteArray? = null,
+    val imageName: String = "",
+    val isLoadingImage: Boolean = false,
+    val showPdfDialog: Boolean = false,
+    val pdfFile: java.io.File? = null,
+    val pdfName: String = "",
+    val isLoadingPdf: Boolean = false,
     // agent 详情 / vcs 状态
     val showAgentDetail: Boolean = false,
     val agentDetail: AgentInfo? = null,
@@ -1353,6 +1362,71 @@ class ChatViewModel @Inject constructor(
 
     fun closeShellDialog() {
         _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showShellDialog = false)) }
+    }
+
+    /** 文件点击分发：图片应用内看，PDF 应用内渲染，其余下载走系统应用。 */
+    fun openMedia(path: String, displayName: String) {
+        val sid = _uiState.value.sessionId
+        val dir = _uiState.value.sessionDirectory
+        when {
+            com.opencode.remote.data.api.FileMediaTypes.isImage(displayName) -> {
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(
+                    showImageDialog = true, isLoadingImage = true, imageBytes = null, imageName = displayName,
+                ))}
+                viewModelScope.launch {
+                    try {
+                        val bytes = repository.readFileBytes(path, dir)
+                        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(imageBytes = bytes, isLoadingImage = false)) }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "load image failed", e)
+                        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(isLoadingImage = false)) }
+                        toast("图片加载失败：" + (e.localizedMessage ?: e.javaClass.simpleName))
+                    }
+                }
+            }
+            com.opencode.remote.data.api.FileMediaTypes.isPdf(displayName) -> {
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(
+                    showPdfDialog = true, isLoadingPdf = true, pdfFile = null, pdfName = displayName,
+                ))}
+                viewModelScope.launch {
+                    try {
+                        val bytes = repository.readFileBytes(path, dir)
+                        val f = java.io.File(appContext.cacheDir, "shared/pdf_" + System.currentTimeMillis() + ".pdf")
+                        f.parentFile?.mkdirs()
+                        f.writeBytes(bytes)
+                        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(pdfFile = f, isLoadingPdf = false)) }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "load pdf failed", e)
+                        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(isLoadingPdf = false)) }
+                        toast("PDF 加载失败：" + (e.localizedMessage ?: e.javaClass.simpleName))
+                    }
+                }
+            }
+            else -> {
+                viewModelScope.launch {
+                    val msg = try {
+                        repository.openWithSystem(path, dir)
+                    } catch (e: Exception) {
+                        "打开失败：" + (e.localizedMessage ?: e.javaClass.simpleName)
+                    }
+                    toast(msg)
+                }
+            }
+        }
+    }
+
+    fun closeImageDialog() {
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showImageDialog = false, imageBytes = null)) }
+    }
+
+    fun closePdfDialog() {
+        val f = _uiState.value.chatDisplay.pdfFile
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showPdfDialog = false, pdfFile = null)) }
+        try { f?.delete() } catch (_: Exception) {}
+    }
+
+    private fun toast(msg: String) {
+        try { android.widget.Toast.makeText(appContext, msg, android.widget.Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
     }
 
     fun onShellInput(text: String) {

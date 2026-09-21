@@ -31,6 +31,7 @@ fun RightPanel(
     onToggleFilePreview: ((FileNode) -> Unit)? = null,
     vcsText: String? = null,
     onVcsClick: (() -> Unit)? = null,
+    onOpenFile: ((FileNode) -> Unit)? = null,
 ) {
     Surface(
         modifier = modifier
@@ -87,6 +88,7 @@ fun RightPanel(
                 expandedFileContent = expandedFileContent,
                 isLoadingFileContent = isLoadingFileContent,
                 onToggleFilePreview = onToggleFilePreview,
+                onOpenFile = onOpenFile,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),

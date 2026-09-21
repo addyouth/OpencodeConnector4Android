@@ -3,6 +3,7 @@ package com.opencode.remote.ui.chat
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -33,7 +34,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import coil3.ImageLoader
+import coil3.compose.AsyncImage
+import coil3.gif.GifDecoder
+import coil3.svg.SvgDecoder
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -560,6 +567,7 @@ fun ChatScreen(
                     vcsText = if (uiState.chatDisplay.isLoadingVcs) "…"
                         else uiState.chatDisplay.vcsFiles.size.let { if (it > 0) "● $it" else "○" },
                     onVcsClick = viewModel::openVcsDialog,
+                    onOpenFile = { file -> viewModel.openMedia(file.path, file.displayName) },
                 )
             }
         }
@@ -634,6 +642,28 @@ fun ChatScreen(
                 onDismiss = viewModel::closeDiffDialog,
             )
         }
+
+        // Image viewer dialog
+        if (uiState.chatDisplay.showImageDialog) {
+            ImageDialog(
+                title = uiState.chatDisplay.imageName.ifEmpty { s.diffTitle },
+                bytes = uiState.chatDisplay.imageBytes,
+                isLoading = uiState.chatDisplay.isLoadingImage,
+                closeText = s.close,
+                onDismiss = viewModel::closeImageDialog,
+            )
+        }
+
+        // PDF viewer dialog
+        if (uiState.chatDisplay.showPdfDialog) {
+            PdfDialog(
+                title = uiState.chatDisplay.pdfName.ifEmpty { s.diffTitle },
+                file = uiState.chatDisplay.pdfFile,
+                isLoading = uiState.chatDisplay.isLoadingPdf,
+                closeText = s.close,
+                onDismiss = viewModel::closePdfDialog,
+            )
+        }
     }
 }
 
@@ -700,6 +730,158 @@ private fun ShellDialog(
             TextButton(onClick = onRun, enabled = !isRunning && command.isNotBlank()) { Text(runText) }
         },
         dismissButton = {
+            TextButton(onClick = onDismiss) { Text(closeText) }
+        },
+    )
+}
+
+@Composable
+private fun ImageDialog(
+    title: String,
+    bytes: ByteArray?,
+    isLoading: Boolean,
+    closeText: String,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val loader = remember {
+        ImageLoader.Builder(context)
+            .components {
+                add(GifDecoder.Factory())
+                add(SvgDecoder.Factory())
+            }
+            .build()
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        text = {
+            when {
+                isLoading -> Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                }
+                bytes != null -> Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState())
+                        .horizontalScroll(rememberScrollState()),
+                ) {
+                    AsyncImage(
+                        model = bytes,
+                        imageLoader = loader,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                else -> Text(closeText)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(closeText) }
+        },
+    )
+}
+
+@Composable
+private fun PdfDialog(
+    title: String,
+    file: java.io.File?,
+    isLoading: Boolean,
+    closeText: String,
+    onDismiss: () -> Unit,
+) {
+    var pageCount by remember(file) { mutableIntStateOf(0) }
+    var pageIndex by remember(file) { mutableIntStateOf(0) }
+    var bitmap by remember(file) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var renderer by remember { mutableStateOf<android.graphics.pdf.PdfRenderer?>(null) }
+    DisposableEffect(file) {
+        var r: android.graphics.pdf.PdfRenderer? = null
+        var pfd: android.os.ParcelFileDescriptor? = null
+        try {
+            if (file != null && file.exists()) {
+                pfd = android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+                r = android.graphics.pdf.PdfRenderer(pfd)
+                pageCount = r.pageCount
+            }
+        } catch (_: Exception) {
+            try { r?.close() } catch (_: Exception) {}
+            try { pfd?.close() } catch (_: Exception) {}
+            r = null
+        }
+        renderer = r
+        onDispose {
+            try { renderer?.close() } catch (_: Exception) {}
+            renderer = null
+            try { bitmap?.recycle() } catch (_: Exception) {}
+            bitmap = null
+        }
+    }
+    LaunchedEffect(file, pageIndex) {
+        val r = renderer ?: return@LaunchedEffect
+        try {
+            val page = r.openPage(pageIndex.coerceIn(0, (pageCount - 1).coerceAtLeast(0)))
+            val scale = (1080f / page.width.toFloat()).coerceIn(0.5f, 3f)
+            val w = (page.width * scale).toInt().coerceAtLeast(1)
+            val h = (page.height * scale).toInt().coerceIn(1, 4096)
+            val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+            page.render(bmp, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            page.close()
+            try { bitmap?.recycle() } catch (_: Exception) {}
+            bitmap = bmp
+        } catch (_: Exception) {}
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column {
+                when {
+                    isLoading -> Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    }
+                    bitmap != null -> Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState()),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Image(
+                            bitmap = bitmap!!.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    else -> Text(closeText)
+                }
+                if (pageCount > 1) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(
+                            onClick = { if (pageIndex > 0) pageIndex-- },
+                            enabled = pageIndex > 0,
+                        ) { Text("<") }
+                        Text("${pageIndex + 1} / $pageCount")
+                        TextButton(
+                            onClick = { if (pageIndex < pageCount - 1) pageIndex++ },
+                            enabled = pageIndex < pageCount - 1,
+                        ) { Text(">") }
+                    }
+                }
+            }
+        },
+        confirmButton = {
             TextButton(onClick = onDismiss) { Text(closeText) }
         },
     )
