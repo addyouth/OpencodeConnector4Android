@@ -5,6 +5,7 @@ import android.util.Base64
 import com.opencode.remote.data.api.dto.*
 import com.opencode.remote.ui.chat.ModelSelectionRef
 import com.opencode.remote.ui.chat.PermissionRequestData
+import com.opencode.remote.ui.chat.QuestionRequestData
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
 import io.ktor.client.plugins.*
@@ -432,6 +433,50 @@ class OConnectorApiClient @Inject constructor(
         } catch (e: Exception) {
             Log.w(TAG, "getServerDefaults failed: ${e.message}")
             Pair(null, null)
+        }
+    }
+
+    /**
+     * v2 question 表单：GET /api/session/{id}/form → {data: [Form]}（桌面 ABC 窗口同源）。
+     * question 不走 SSE、不进 permission 列表，这是唯一活路。
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun listQuestionForms(sessionId: String): List<QuestionRequestData> {
+        return try {
+            val el = getJson("/api/session/$sessionId/form") {}
+            val arr = (el as? JsonObject)?.get("data") as? JsonArray ?: return emptyList()
+            arr.mapNotNull { item ->
+                try {
+                    val o = item.jsonObject
+                    val id = o.string("id") ?: return@mapNotNull null
+                    val fields = o["fields"]?.jsonArray ?: return@mapNotNull null
+                    val qs = fields.mapNotNull { f ->
+                        val fo = f.jsonObject
+                        val key = fo.string("key") ?: return@mapNotNull null
+                        val opts = fo["options"]?.jsonArray?.mapNotNull { opt ->
+                            val oo = opt.jsonObject
+                            val label = oo.string("label") ?: oo.string("value") ?: return@mapNotNull null
+                            QuestionOptionDto(
+                                label = label,
+                                description = oo.string("description"),
+                                value = oo.string("value"),
+                            )
+                        } ?: emptyList()
+                        QuestionInfoDto(
+                            key = key,
+                            question = fo.string("description") ?: fo.string("title") ?: "",
+                            header = fo.string("title"),
+                            options = opts,
+                            custom = true,
+                        )
+                    }
+                    if (qs.isEmpty()) return@mapNotNull null
+                    QuestionRequestData(id = id, sessionID = sessionId, questions = qs, tool = null)
+                } catch (e: Exception) { Log.w(TAG, "Bad form item", e); null }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "listQuestionForms failed: ${e.message}")
+            emptyList()
         }
     }
 

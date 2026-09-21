@@ -114,6 +114,8 @@ interface OConnectorRepository {
     fun getLastTestError(): String?
     /** 最近一次 createSession 失败的真实原因（成功时为 null）。 */
     fun getLastCreateError(): String?
+    /** v2 question 表单：唯一活路（无 SSE、无 permission 条目）。 */
+    suspend fun listQuestionForms(sessionId: String): List<QuestionRequestData>
 
     // ─── Agents ─────────────────────────────────────────────────────────
 
