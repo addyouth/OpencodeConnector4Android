@@ -345,10 +345,15 @@ fun ProjectSessionsScreen(
         }
     }
 
-    val projectSessions = remember(uiState.sessions, directory) {
-        uiState.sessions
-            .filter { it.resolvedDirectory == directory }
-            .sortedByDescending { it.time?.updated ?: it.time?.created ?: 0L }
+    val projectSessions = remember(uiState.allSessions, directory) {
+        val inDir = uiState.allSessions.filter { it.resolvedDirectory == directory }
+        val ids = inDir.map { it.id }.toSet()
+        // 顶层规则：无父引用，或父不在本项目（搬过来的孤儿子会话顶层展示）；
+        // 父在身边的只挂父展开项下，避免双份
+        inDir.filter { s ->
+            val p = s.fork?.sessionID ?: s.parentID
+            p.isNullOrBlank() || p !in ids
+        }.sortedByDescending { it.time?.updated ?: it.time?.created ?: 0L }
     }
 
     // Rename / Move dialog targets (declared here: used by cards above AND dialogs below)

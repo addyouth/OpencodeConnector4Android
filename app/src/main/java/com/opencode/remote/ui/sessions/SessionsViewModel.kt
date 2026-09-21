@@ -52,6 +52,8 @@ data class SessionsUiState(
     val listDensity: ListDensity = ListDensity.DEFAULT,
     // Child session tree expansion
     val expandedParents: Set<String> = emptySet(),
+    /** 全量会话（含子，用于项目视图按目录+孤儿规则展示；顶层列表仍用 sessions） */
+    val allSessions: List<SessionInfo> = emptyList(),
     // Worktree manager state
     val showWorktreeDialog: Boolean = false,
     val worktreeProjectID: String? = null,
@@ -181,6 +183,7 @@ class SessionsViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         sessions = visibleSessions,
+                        allSessions = allSessions,
                         isLoading = false,
                         groupedSessions = groupSessionsByTime(visibleSessions),
                     )
