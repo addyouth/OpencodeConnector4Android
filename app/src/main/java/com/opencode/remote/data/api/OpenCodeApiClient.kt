@@ -9,6 +9,7 @@ import com.opencode.remote.ui.chat.QuestionRequestData
 import io.ktor.client.*
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.*
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.core.readByteArray
 import io.ktor.client.plugins.*
@@ -843,9 +844,16 @@ class OConnectorApiClient @Inject constructor(
     suspend fun readFileBytes(path: String, directory: String? = null, maxBytes: Int = 25_000_000): ByteArray {
         val p = resolveFsPath(path, directory)
         // bodyAsChannel 绕过 ContentNegotiation（否则二进制会被当 JSON 解析炸掉）
-        val data = client.get(fullUrl("/api/fs/read/${encPath(p)}")) {}.bodyAsChannel().readRemaining().readByteArray()
-        if (data.size > maxBytes) throw IllegalStateException("file too large (${data.size} bytes)")
-        return data
+        val ch = client.get(fullUrl("/api/fs/read/${encPath(p)}")) {}.bodyAsChannel()
+        val out = java.io.ByteArrayOutputStream()
+        val buf = ByteArray(8192)
+        while (!ch.isClosedForRead) {
+            val n = ch.readAvailable(buf)
+            if (n <= 0) break
+            out.write(buf, 0, n)
+            if (out.size() > maxBytes) throw IllegalStateException("file too large (>${maxBytes} bytes)")
+        }
+        return out.toByteArray()
     }
 
     // ─── Config / Providers / Models（需求③核心） ────────────────────────

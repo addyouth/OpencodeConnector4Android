@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import com.opencode.remote.data.api.OConnectorApiClient
 import com.opencode.remote.data.api.OConnectorSseClient
+import com.opencode.remote.data.api.FileMediaTypes
 import com.opencode.remote.data.api.PtyWsClient
 import com.opencode.remote.data.api.dto.*
 import com.opencode.remote.data.datastore.ConnectionConfig
