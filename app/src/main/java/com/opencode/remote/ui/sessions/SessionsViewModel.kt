@@ -305,6 +305,36 @@ class SessionsViewModel @Inject constructor(
         }
     }
 
+    fun renameSession(sessionId: String, title: String) {
+        viewModelScope.launch {
+            try {
+                repository.renameSession(sessionId, title)
+                loadSessions()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to rename session", e)
+                val s = com.opencode.remote.ui.strings.AppLocale.strings
+                _uiState.update { it.copy(error = s.errRenameSession.replace("%s", e.localizedMessage ?: e.javaClass.simpleName)) }
+            }
+        }
+    }
+
+    fun moveSession(sessionId: String, directory: String) {
+        viewModelScope.launch {
+            try {
+                repository.moveSession(sessionId, directory)
+                loadSessions()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to move session", e)
+                val s = com.opencode.remote.ui.strings.AppLocale.strings
+                _uiState.update { it.copy(error = s.errMoveSession.replace("%s", e.localizedMessage ?: e.javaClass.simpleName)) }
+            }
+        }
+    }
+
+    /** 去重项目目录（move picker 用，不另调接口）。 */
+    fun projectDirectories(): List<String> =
+        allSessions.mapNotNull { it.resolvedDirectory }.distinct().sorted()
+
     fun clearError() {
         _uiState.update { it.copy(error = null) }
     }

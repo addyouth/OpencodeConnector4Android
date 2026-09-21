@@ -122,6 +122,10 @@ data class ChatDisplayState(
     val pendingQuestion: QuestionRequestData? = null,
     val isBlocked: Boolean = false,  // true when AI is waiting for user response
     val recoveryPending: Boolean = false,  // true when heuristic detected possible interrupted blocking state
+    // Session Enhancement Pack: diff viewer state
+    val showDiffDialog: Boolean = false,
+    val diffFiles: List<FileDiffInfo> = emptyList(),
+    val isLoadingDiff: Boolean = false,
 )
 
 data class ChatUiState(
@@ -444,6 +448,8 @@ class ChatViewModel @Inject constructor(
                         ),
                     )
                 }
+                // 服务端权威用量顺带刷新（失败沿用本地启发值）
+                refreshContextUsage()
             } catch (e: Exception) { Log.w(TAG, "Failed to load session info", e) }
         }
     }
@@ -1270,8 +1276,64 @@ class ChatViewModel @Inject constructor(
         startStreamingWatchdog()
     }
 
-    fun abortSession() {
+    // ─── Session Enhancement Pack ───
+
+    /** 压缩上下文：服务端总结后重载消息 */
+    fun compactSession() {
+        val sid = _uiState.value.sessionId
+        if (sid.isBlank()) return
         viewModelScope.launch {
+            try {
+                repository.compactSession(sid)
+                val fresh = repository.getMessages(sid, _uiState.value.sessionDirectory)
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(messages = fresh.applyMessageFilters(it.sessionMeta.revertMessageId))) }
+                updateContextUsage()
+            } catch (e: Exception) {
+                Log.e(TAG, "compact failed", e)
+                val s = com.opencode.remote.ui.strings.AppLocale.strings
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(error = s.errSendFailed.replace("%s", e.localizedMessage ?: e.javaClass.simpleName))) }
+            }
+        }
+    }
+
+    /** 用服务端上下文窗口用量刷新显示（失败沿用本地启发值）。 */
+    fun refreshContextUsage() {
+        val sid = _uiState.value.sessionId
+        if (sid.isBlank()) return
+        viewModelScope.launch {
+            try {
+                val ctxMsgs = repository.getSessionContext(sid)
+                val total = ctxMsgs.sumOf { m ->
+                    (m.info.tokens?.tokenTotal() ?: 0) +
+                        m.parts.sumOf { it.tokens?.tokenTotal() ?: 0 }
+                }
+                if (total > 0) {
+                    _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(contextUsageK = "${total / 1000}K")) }
+                }
+            } catch (e: Exception) { Log.w(TAG, "server context usage failed, keep local", e) }
+        }
+    }
+
+    fun openDiffDialog() {
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showDiffDialog = true, isLoadingDiff = true, diffFiles = emptyList())) }
+        val sid = _uiState.value.sessionId
+        if (sid.isBlank()) return
+        viewModelScope.launch {
+            try {
+                val files = repository.getSessionDiff(sid)
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(diffFiles = files, isLoadingDiff = false)) }
+            } catch (e: Exception) {
+                Log.e(TAG, "load diff failed", e)
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(isLoadingDiff = false)) }
+            }
+        }
+    }
+
+    fun closeDiffDialog() {
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showDiffDialog = false)) }
+    }
+
+    fun abortSession() {        viewModelScope.launch {
             try {
                 repository.abortSession(_uiState.value.sessionId, _uiState.value.sessionDirectory)
                 batchFlushJob?.cancel()

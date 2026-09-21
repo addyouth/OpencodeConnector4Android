@@ -10,6 +10,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -570,6 +572,8 @@ fun ProjectSessionsScreen(
                                                         onClick = { onSessionClick(session.id) },
                                                         onDelete = { viewModel.deleteSession(session.id, directory) },
                                                         onFork = { viewModel.forkSession(session.id, directory) },
+                                                        onRename = { renameTarget = session },
+                                                        onMove = { moveTarget = session },
                                                         hasChildren = hasChildren,
                                                         isExpanded = isExpanded,
                                                         onToggleExpand = {
@@ -595,6 +599,8 @@ fun ProjectSessionsScreen(
                                                                     onClick = { onSessionClick(childId) },
                                                                     onDelete = { viewModel.deleteSession(childId, directory) },
                                                                     onFork = { viewModel.forkSession(childId, directory) },
+                                                                    onRename = { renameTarget = childSession },
+                                                                    onMove = { moveTarget = childSession },
                                                                     isChild = true,
                                                                 )
                                                             }
@@ -613,6 +619,69 @@ fun ProjectSessionsScreen(
                         error = uiState.error,
                         onDismiss = viewModel::clearError,
                     )
+
+                    // Rename dialog
+                    var renameTarget by remember { mutableStateOf<SessionInfo?>(null) }
+                    var renameText by remember(renameTarget) { mutableStateOf(renameTarget?.title ?: "") }
+                    renameTarget?.let { target ->
+                        AlertDialog(
+                            onDismissRequest = { renameTarget = null },
+                            title = { Text(s.renameSession) },
+                            text = {
+                                OutlinedTextField(
+                                    value = renameText,
+                                    onValueChange = { renameText = it },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    viewModel.renameSession(target.id, renameText.trim())
+                                    renameTarget = null
+                                }) { Text(s.selectionConfirm) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { renameTarget = null }) { Text(s.selectionCancel) }
+                            },
+                        )
+                    }
+
+                    // Move dialog (pick target project directory)
+                    var moveTarget by remember { mutableStateOf<SessionInfo?>(null) }
+                    moveTarget?.let { target ->
+                        val dirs = remember { viewModel.projectDirectories() }
+                        AlertDialog(
+                            onDismissRequest = { moveTarget = null },
+                            title = { Text(s.moveSession) },
+                            text = {
+                                Column(
+                                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                                ) {
+                                    dirs.forEach { dir ->
+                                        val selected = dir == target.resolvedDirectory
+                                        TextButton(
+                                            onClick = {
+                                                if (!selected) viewModel.moveSession(target.id, dir)
+                                                moveTarget = null
+                                            },
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) {
+                                            Text(
+                                                text = (if (selected) "● " else "") + dir.replace('\\', '/').substringAfterLast('/'),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                            confirmButton = {},
+                            dismissButton = {
+                                TextButton(onClick = { moveTarget = null }) { Text(s.selectionCancel) }
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -645,6 +714,8 @@ private fun SessionCard(
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onFork: () -> Unit,
+    onRename: () -> Unit = {},
+    onMove: () -> Unit = {},
     isChild: Boolean = false,
     hasChildren: Boolean = false,
     isExpanded: Boolean = false,
@@ -767,6 +838,22 @@ private fun SessionCard(
                         onClick = {
                             showMenu = false
                             onFork()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(s.renameSession) },
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            onRename()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(s.moveSession) },
+                        leadingIcon = { Icon(Icons.Default.DriveFileMove, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            onMove()
                         },
                     )
                     DropdownMenuItem(

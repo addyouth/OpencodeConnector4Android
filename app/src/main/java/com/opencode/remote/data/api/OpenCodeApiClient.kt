@@ -244,6 +244,56 @@ class OConnectorApiClient @Inject constructor(
         )
     }
 
+    /** PATCH /api/session/{id} {title} → 重命名会话 */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun renameSession(id: String, title: String): SessionInfo {
+        client.patch(fullUrl("/api/session/$id")) {
+            expectSuccess = true
+            setBody(buildJsonObject { put("title", title) })
+        }
+        return getSession(id)
+    }
+
+    /** POST /api/session/{id}/compact → 压缩上下文（长会话续命） */
+    suspend fun compactSession(id: String) {
+        client.post(fullUrl("/api/session/$id/compact")) {
+            expectSuccess = true
+        }
+    }
+
+    /** GET /api/session/{id}/context → 上下文窗口消息（用量权威源，按 token 求和） */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun getSessionContext(id: String): List<MessageInfo> {
+        val el = getJson("/api/session/$id/context") {}
+        val arr = el.dataArray() ?: return emptyList()
+        return arr.mapNotNull { item ->
+            try { V2MessageParser.fromJsonElement(item) }
+            catch (e: Exception) { Log.w(TAG, "Failed to parse context message: ${e.message}"); null }
+        }
+    }
+
+    /** POST /api/session/{id}/move {directory} → 搬迁会话到别的项目目录 */
+    suspend fun moveSession(id: String, directory: String) {
+        client.post(fullUrl("/api/session/$id/move")) {
+            expectSuccess = true
+            setBody(buildJsonObject { put("directory", directory) })
+        }
+    }
+
+    /** GET /api/session/{id}/diff[?from&to] → 本 turn 文件变更 */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun getSessionDiff(id: String, from: String? = null, to: String? = null): List<FileDiffInfo> {
+        val el = getJson("/api/session/$id/diff") {
+            from?.let { parameter("from", it) }
+            to?.let { parameter("to", it) }
+        }
+        val arr = el.dataArray() ?: return emptyList()
+        return arr.mapNotNull { item ->
+            try { json.decodeFromJsonElement(FileDiffInfo.serializer(), item) }
+            catch (e: Exception) { Log.w(TAG, "Failed to decode diff: ${e.message}"); null }
+        }
+    }
+
     /** DELETE /api/session/{id} */
     suspend fun deleteSession(id: String, directory: String? = null) {
         client.delete(fullUrl("/api/session/$id")) {}

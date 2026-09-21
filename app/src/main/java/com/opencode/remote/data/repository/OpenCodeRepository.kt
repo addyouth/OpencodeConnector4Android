@@ -106,6 +106,14 @@ interface OConnectorRepository {
     suspend fun getCurrentProject(): ProjectInfo
     suspend fun listProjects(): List<ProjectInfo>
 
+    // ─── Session Enhancement Pack（会话增强包：重命名/压缩/用量/搬迁/diff） ──
+
+    suspend fun renameSession(sessionId: String, title: String): SessionInfo
+    suspend fun compactSession(sessionId: String)
+    suspend fun getSessionContext(sessionId: String): List<MessageInfo>
+    suspend fun moveSession(sessionId: String, directory: String)
+    suspend fun getSessionDiff(sessionId: String, from: String? = null, to: String? = null): List<FileDiffInfo>
+
     // ─── Test Connection ─────────────────────────────────────────────
 
     suspend fun testConnection(): Boolean
@@ -550,6 +558,23 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     override suspend fun listProjects(): List<ProjectInfo> =
         requireClient().listProjects()
+
+    // ─── Session Enhancement Pack ────────────────────────────────────
+
+    override suspend fun renameSession(sessionId: String, title: String): SessionInfo =
+        requireClient().renameSession(sessionId, title)
+
+    override suspend fun compactSession(sessionId: String) =
+        requireClient().compactSession(sessionId)
+
+    override suspend fun getSessionContext(sessionId: String): List<MessageInfo> =
+        requireClient().getSessionContext(sessionId)
+
+    override suspend fun moveSession(sessionId: String, directory: String) =
+        requireClient().moveSession(sessionId, directory)
+
+    override suspend fun getSessionDiff(sessionId: String, from: String?, to: String?): List<FileDiffInfo> =
+        requireClient().getSessionDiff(sessionId, from, to)
 
     // ─── Test Connection ─────────────────────────────────────────────
 

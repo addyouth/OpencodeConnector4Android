@@ -3,6 +3,7 @@ package com.opencode.remote.ui.chat
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,13 +14,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -28,10 +34,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.opencode.remote.data.api.dto.FileDiffInfo
 import com.opencode.remote.data.api.dto.MessageInfo
 import com.opencode.remote.data.api.dto.MessageInfoData
 import com.opencode.remote.ui.components.ErrorSnackbar
@@ -281,6 +289,12 @@ fun ChatScreen(
                             }
                             IconButton(onClick = { viewModel.initialize(sessionId, directory) }) {
                                 Icon(Icons.Default.Refresh, contentDescription = s.refresh)
+                            }
+                            IconButton(onClick = viewModel::openDiffDialog) {
+                                Icon(Icons.Default.Difference, contentDescription = s.diffTitle)
+                            }
+                            IconButton(onClick = viewModel::compactSession) {
+                                Icon(Icons.Default.Compress, contentDescription = s.compactTitle)
                             }
                         },
                     )
@@ -546,7 +560,104 @@ fun ChatScreen(
                 onVariantSelected = viewModel::updateDraftVariant,
             )
         }
+
+        // Session diff dialog
+        if (uiState.showDiffDialog) {
+            DiffDialog(
+                title = s.diffTitle,
+                files = uiState.diffFiles,
+                isLoading = uiState.isLoadingDiff,
+                closeText = s.close,
+                emptyText = s.diffEmpty,
+                onDismiss = viewModel::closeDiffDialog,
+            )
+        }
     }
+}
+
+@Composable
+private fun DiffDialog(
+    title: String,
+    files: List<FileDiffInfo>,
+    isLoading: Boolean,
+    closeText: String,
+    emptyText: String,
+    onDismiss: () -> Unit,
+) {
+    var expandedPath by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            when {
+                isLoading -> Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                }
+                files.isEmpty() -> Text(
+                    text = emptyText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                else -> LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                    items(files, key = { it.file + it.status }) { f ->
+                        Column {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { expandedPath = if (expandedPath == f.file) null else f.file }
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = f.file.replace('\\', '/').substringAfterLast('/').ifEmpty { f.file },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "+${f.additions}/-${f.deletions}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                            }
+                            if (expandedPath == f.file && f.patch.isNotBlank()) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(4.dp),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .heightIn(max = 200.dp)
+                                            .verticalScroll(rememberScrollState())
+                                            .padding(8.dp),
+                                    ) {
+                                        SelectionContainer {
+                                            Text(
+                                                text = f.patch,
+                                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(closeText) }
+        },
+    )
 }
 
 @Composable

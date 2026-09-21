@@ -94,6 +94,16 @@ data class FileContent(
     val mimeType: String? = null,
 )
 
+/** v2 GET /api/session/{id}/diff → {data: [{file, patch, additions, deletions, status}]} */
+@Serializable
+data class FileDiffInfo(
+    val file: String = "",
+    val patch: String = "",
+    val additions: Int = 0,
+    val deletions: Int = 0,
+    val status: String = "modified",
+)
+
 @Serializable
 data class ProviderList(
     @SerialName("all")
