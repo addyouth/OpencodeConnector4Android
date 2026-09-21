@@ -362,11 +362,11 @@ class OConnectorApiClient @Inject constructor(
         client.post(fullUrl("/api/worktree")) {
             expectSuccess = true
             setBody(buildJsonObject {
-                put("projectID", projectID)
-                if (!branch.isNullOrBlank()) put("branch", branch)
-                if (!name.isNullOrBlank()) put("name", name)
-                if (!directory.isNullOrBlank()) put("directory", directory)
-                if (!from.isNullOrBlank()) put("from", from)
+                put("projectID", JsonPrimitive(projectID))
+                if (!branch.isNullOrBlank()) put("branch", JsonPrimitive(branch))
+                if (!name.isNullOrBlank()) put("name", JsonPrimitive(name))
+                if (!directory.isNullOrBlank()) put("directory", JsonPrimitive(directory))
+                if (!from.isNullOrBlank()) put("from", JsonPrimitive(from))
             })
         }
     }
@@ -375,9 +375,9 @@ class OConnectorApiClient @Inject constructor(
         client.delete(fullUrl("/api/worktree")) {
             expectSuccess = true
             setBody(buildJsonObject {
-                put("projectID", projectID)
-                put("directory", directory)
-                put("force", force)
+                put("projectID", JsonPrimitive(projectID))
+                put("directory", JsonPrimitive(directory))
+                put("force", JsonPrimitive(force))
             })
         }
     }
@@ -385,7 +385,7 @@ class OConnectorApiClient @Inject constructor(
     suspend fun refreshWorktrees(projectID: String) {
         client.post(fullUrl("/api/worktree/refresh")) {
             expectSuccess = true
-            setBody(buildJsonObject { put("projectID", projectID) })
+            setBody(buildJsonObject { put("projectID", JsonPrimitive(projectID)) })
         }
     }
 

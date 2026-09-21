@@ -1421,7 +1421,7 @@ class ChatViewModel @Inject constructor(
 
     fun openVcsDialog() {
         _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showVcsDialog = true)) }
-        if (_uiState.value.vcsFiles.isEmpty() && !_uiState.value.isLoadingVcs) loadVcsStatus()
+        if (_uiState.value.chatDisplay.vcsFiles.isEmpty() && !_uiState.value.chatDisplay.isLoadingVcs) loadVcsStatus()
     }
 
     fun closeVcsDialog() {
