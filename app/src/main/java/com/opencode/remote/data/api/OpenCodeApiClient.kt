@@ -181,7 +181,14 @@ class OConnectorApiClient @Inject constructor(
     var lastCreateError: String? = null
         private set
 
-    /** POST /api/session → {data: Session.Info}。显式传 agent（需求②默认主代理） */
+    /** POST /api/session 返回 {data: [Session]}（数组！单元素 PowerShell 会自动拆包，曾掩盖此 bug）。 */
+    @OptIn(ExperimentalSerializationApi::class)
+    private fun sessionFromData(el: JsonElement): JsonElement {
+        val payload = if (el is JsonObject) (el["data"] ?: el) else el
+        return if (payload is JsonArray) payload.firstOrNull() ?: payload else payload
+    }
+
+    /** POST /api/session → {data: [Session]}。显式传 agent（需求②默认主代理） */
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun createSession(directory: String? = null, agent: String? = null): CreateSessionResponse {
         val body = V2CreateSessionBody(
@@ -199,7 +206,7 @@ class OConnectorApiClient @Inject constructor(
         return try {
             lastCreateError = null
             CreateSessionResponse.fromSession(
-                json.decodeFromJsonElement(SessionInfo.serializer(), el.jsonObject["data"] ?: el)
+                json.decodeFromJsonElement(SessionInfo.serializer(), sessionFromData(el))
             )
         } catch (e: Exception) {
             lastCreateError = "decode: ${e.javaClass.simpleName}: ${e.message} payload=${el.toString().take(200)}"
@@ -214,7 +221,7 @@ class OConnectorApiClient @Inject constructor(
         val el = getJson("/api/session/$id") {}
         return json.decodeFromJsonElement(
             SessionInfo.serializer(),
-            el.jsonObject["data"] ?: el
+            sessionFromData(el)
         )
     }
 
@@ -223,13 +230,13 @@ class OConnectorApiClient @Inject constructor(
         client.delete(fullUrl("/api/session/$id")) {}
     }
 
-    /** POST /api/session/{id}/fork → {data: Session.Info} */
+    /** POST /api/session/{id}/fork → {data: Session.Info}（同 create，data 也可能是数组） */
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun forkSession(id: String, directory: String? = null): CreateSessionResponse {
         val el = getJson("/api/session/$id/fork") { setBody("{}") }
         return try {
             CreateSessionResponse.fromSession(
-                json.decodeFromJsonElement(SessionInfo.serializer(), el.jsonObject["data"] ?: el)
+                json.decodeFromJsonElement(SessionInfo.serializer(), sessionFromData(el))
             )
         } catch (e: Exception) {
             Log.w(TAG, "forkSession: odd response $el", e)
