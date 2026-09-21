@@ -21,6 +21,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -435,14 +436,15 @@ class OConnectorApiClient @Inject constructor(
     }
 
     /**
-     * v2 question 应答：暂走 permission 回复路由（call id 直传）。
-     * dev 版另有 /question 专属路由组，但 2.0.10 未挂载；若此路由 400 即回退 abort 解锁。
+     * v2 question 应答：POST .../form/{formID}/reply {answer: {key: value}}（活体验证过路由存在；
+     * permission 路由对 question id 通通 400）。
      */
     @OptIn(ExperimentalSerializationApi::class)
-    suspend fun answerQuestion(sessionId: String, callId: String, answers: List<List<String>>) {
-        client.post(fullUrl("/api/session/$sessionId/permission/$callId/reply")) {
+    suspend fun answerQuestion(sessionId: String, formId: String, answer: Map<String, JsonElement>) {
+        client.post(fullUrl("/api/session/$sessionId/form/$formId/reply")) {
+            // 错了直接抛，手机端 toast 可见，不静默吞
             expectSuccess = true
-            setBody(QuestionReplyPayload(answers = answers))
+            setBody(buildJsonObject { put("answer", JsonObject(answer)) })
         }
     }
 

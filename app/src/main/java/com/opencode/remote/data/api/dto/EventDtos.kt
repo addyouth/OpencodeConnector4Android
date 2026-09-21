@@ -99,6 +99,8 @@ data class ToolRef(
 data class QuestionOptionDto(
     val label: String = "",
     val description: String? = null,
+    /** form 选项的 value（应答时按 value 回传，无则回 label）。 */
+    val value: String? = null,
 )
 
 /** Single question in a question.asked event. */
@@ -109,6 +111,8 @@ data class QuestionInfoDto(
     val options: List<QuestionOptionDto> = emptyList(),
     val multiple: Boolean = false,
     val custom: Boolean = false,
+    /** form 字段 key（应答 answer map 用；消息扫描路径为空）。 */
+    val key: String = "",
 )
 
 /** Reply payload for POST /permission/:id/reply */

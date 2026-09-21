@@ -24,6 +24,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -1825,7 +1826,17 @@ class ChatViewModel @Inject constructor(
         val request = _uiState.value.pendingQuestion ?: return
         viewModelScope.launch {
             try {
-                repository.replyQuestion(request.id, answers, _uiState.value.sessionDirectory)
+                // form 应答：key→选中值（单选标量，多选数组；按 value 回传，无则回 label）
+                val ansMap = request.questions.mapIndexed { i, q ->
+                    val key = q.key.ifEmpty { "q$i" }
+                    val sels = answers.getOrNull(i) ?: emptyList()
+                    val vals = sels.mapNotNull { sel -> q.options.find { it.label == sel }?.value ?: sel }
+                    val v: JsonElement =
+                        if (!q.multiple && vals.size == 1) JsonPrimitive(vals[0])
+                        else JsonArray(vals.map { JsonPrimitive(it) })
+                    key to v
+                }.toMap()
+                repository.replyQuestion(request.id, ansMap, _uiState.value.sessionDirectory)
                 Log.d(TAG, "Question replied for ${request.id}")
                 clearBlockingState()
             } catch (e: Exception) {
@@ -1895,84 +1906,27 @@ class ChatViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) { Log.w(TAG, "pollPermissions failed: ${e.message}") }
-            // question 检测同节拍（v2 无 question SSE/路由，从消息内容里找挂起的 question 工具调用）
+            // question 表单轮询（form 是唯一活路：无 SSE、无 permission 条目）
             try {
-                val q = detectPendingQuestion()
-                if (q != null && _uiState.value.pendingQuestion?.id != q.id) {
-                    Log.d(TAG, "Question detected: ${q.id}")
+                val forms = repository.listQuestionForms(sid)
+                val fq = forms.firstOrNull()
+                val cur = _uiState.value.pendingQuestion
+                if (fq != null && cur?.id != fq.id) {
+                    Log.d(TAG, "Question form: ${fq.id}")
                     _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(
-                        pendingQuestion = q, isBlocked = true,
+                        pendingQuestion = fq, isBlocked = true,
                     ))}
-                    repository.saveBlockingState(sid, _uiState.value.pendingPermission, q)
+                    repository.saveBlockingState(sid, _uiState.value.pendingPermission, fq)
                     startBlockingWatchdog()
-                    showQuestionNotification(q)
+                    showQuestionNotification(fq)
+                } else if (fq == null && cur != null && cur.id.startsWith("frm_")) {
+                    // 表单消失（别处已答/已关）→ 清气泡
+                    _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(
+                        pendingQuestion = null, isBlocked = _uiState.value.pendingPermission != null,
+                    ))}
                 }
-            } catch (e: Exception) { Log.w(TAG, "detectPendingQuestion failed: ${e.message}") }
+            } catch (e: Exception) { Log.w(TAG, "question form poll failed: ${e.message}") }
         }
-    }
-
-    /**
-     * v2 question 检测：最新 assistant 消息里的 question 工具调用，
-     * 有 input.questions、无 error、未完成即视为挂起（桌面端同源渲染）。
-     */
-    private suspend fun detectPendingQuestion(): QuestionRequestData? {
-        val sid = _uiState.value.sessionId
-        if (sid.isBlank()) return null
-        val dir = _uiState.value.sessionDirectory
-        val msgs = try { repository.getMessages(sid, dir, 8) } catch (e: Exception) { return null }
-        for (msg in msgs.asReversed()) {
-            if (msg.info.role != "assistant") continue
-            if (msg.info.finish == "error") continue
-            for (part in msg.parts.asReversed()) {
-                if (part.type != "tool" || part.tool != "question") continue
-                val callId = part.callID ?: continue
-                val st = part.state
-                val status = st?.status
-                if (status == "completed" || status == "error") continue
-                val questionsEl = try {
-                    st?.input?.jsonObject?.get("questions")?.jsonArray
-                } catch (_: Exception) { null } ?: continue
-                if (questionsEl.isEmpty()) continue
-                val qs = questionsEl.mapNotNull { parseQuestionInput(it) }
-                if (qs.isEmpty()) continue
-                return QuestionRequestData(
-                    id = callId,
-                    sessionID = sid,
-                    questions = qs,
-                    tool = ToolRef(part.messageID, callId),
-                )
-            }
-            break // 只看最新一条 assistant 消息，更早的已成定局
-        }
-        return null
-    }
-
-    private fun parseQuestionInput(el: JsonElement): QuestionInfoDto? {
-        return try {
-            val o = el.jsonObject
-            val q = o["question"]?.jsonPrimitive?.contentOrNull ?: return null
-            val header = o["header"]?.jsonPrimitive?.contentOrNull
-            val opts = o["options"]?.jsonArray?.mapNotNull { opt ->
-                when (opt) {
-                    is JsonObject -> {
-                        val label = opt["label"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                        QuestionOptionDto(
-                            label = label,
-                            description = opt["description"]?.jsonPrimitive?.contentOrNull,
-                        )
-                    }
-                    is JsonPrimitive -> opt.contentOrNull?.let { QuestionOptionDto(label = it) }
-                    else -> null
-                }
-            } ?: emptyList()
-            QuestionInfoDto(
-                question = q,
-                header = header,
-                options = opts,
-                multiple = o["multiple"]?.jsonPrimitive?.booleanOrNull ?: false,
-                custom = o["custom"]?.jsonPrimitive?.booleanOrNull ?: false,
-            )
-        } catch (_: Exception) { null }
     }
 
     private fun showQuestionNotification(req: QuestionRequestData) {

@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -88,7 +89,7 @@ interface OConnectorRepository {
     suspend fun enqueueOffline(item: OfflineQueuedMessage)
     suspend fun flushOutbox(): Int
     fun isOnline(): Boolean
-    suspend fun replyQuestion(requestId: String, answers: List<List<String>>, directory: String? = null)
+    suspend fun replyQuestion(requestId: String, answer: Map<String, JsonElement>, directory: String? = null)
     suspend fun rejectQuestion(requestId: String, directory: String? = null)
 
     // ─── Todo ────────────────────────────────────────────────────────
@@ -513,10 +514,13 @@ class OConnectorRepositoryImpl @Inject constructor(
     override suspend fun getServerDefaults(): Pair<String?, ModelSelectionRef?> =
         try { requireClient().getServerDefaults() } catch (e: Exception) { Pair(null, null) }
 
-    override suspend fun replyQuestion(requestId: String, answers: List<List<String>>, directory: String?) {
+    override suspend fun replyQuestion(requestId: String, answer: Map<String, JsonElement>, directory: String?) {
         val sid = activeSessionId ?: throw IllegalStateException("no active session")
-        requireClient().answerQuestion(sid, requestId, answers)
+        requireClient().answerQuestion(sid, requestId, answer)
     }
+
+    override suspend fun listQuestionForms(sessionId: String): List<QuestionRequestData> =
+        requireClient().listQuestionForms(sessionId)
 
     override suspend fun rejectQuestion(requestId: String, directory: String?) {
         // v2 无 question reject 路由 → 中止 turn 解锁（等价桌面“忽略”）
