@@ -124,6 +124,23 @@ class OConnectorApiClient @Inject constructor(
         return Json.parseToJsonElement(resp.bodyAsText())
     }
 
+    /**
+     * 真 POST（相对 getJson）：建会话/fork/revert 等写操作必须走它。
+     * 血的教训：getJson 里塞 setBody 发出去的是带 body 的 GET，服务端直接忽略
+     * body 当列表查——建会话拿回会话列表，取首元素即最新会话，手机永远跳最新。
+     */
+    private suspend fun postJson(
+        url: String,
+        expectSuccess: Boolean = false,
+        block: HttpRequestBuilder.() -> Unit = {},
+    ): JsonElement {
+        val resp = client.post(fullUrl(url)) {
+            this.expectSuccess = expectSuccess
+            block()
+        }
+        return Json.parseToJsonElement(resp.bodyAsText())
+    }
+
     /** 相对路径拼完整 URL（A 方案根治：configure 丢 baseUrl 的回归 bug）。 */
     private fun fullUrl(path: String): String = baseUrl.trimEnd('/') + path
 
@@ -197,7 +214,7 @@ class OConnectorApiClient @Inject constructor(
             location = directory?.let { V2LocationRef.of(it) },
         )
         val el = try {
-            getJson("/api/session", expectSuccess = true) { setBody(body) }
+            postJson("/api/session", expectSuccess = true) { setBody(body) }
         } catch (e: Exception) {
             lastCreateError = "POST /api/session: ${e.javaClass.simpleName}: ${e.message}"
             Log.w(TAG, "createSession HTTP failed: $lastCreateError")
@@ -233,7 +250,7 @@ class OConnectorApiClient @Inject constructor(
     /** POST /api/session/{id}/fork → {data: Session.Info}（同 create，data 也可能是数组） */
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun forkSession(id: String, directory: String? = null): CreateSessionResponse {
-        val el = getJson("/api/session/$id/fork") { setBody("{}") }
+        val el = postJson("/api/session/$id/fork") { setBody("{}") }
         return try {
             CreateSessionResponse.fromSession(
                 json.decodeFromJsonElement(SessionInfo.serializer(), sessionFromData(el))
@@ -258,7 +275,7 @@ class OConnectorApiClient @Inject constructor(
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun revertSession(id: String, messageID: String, directory: String? = null): SessionInfo {
         try {
-            getJson("/api/session/$id/revert/stage") { setBody(RevertRequest(messageID = messageID)) }
+            postJson("/api/session/$id/revert/stage") { setBody(RevertRequest(messageID = messageID)) }
             try { client.post(fullUrl("/api/session/$id/revert/commit")) { setBody("{}") } } catch (e: Exception) {
                 Log.w(TAG, "revert commit failed", e)
             }
