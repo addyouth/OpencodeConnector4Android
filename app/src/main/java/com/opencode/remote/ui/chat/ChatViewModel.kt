@@ -1245,7 +1245,8 @@ class ChatViewModel @Inject constructor(
         // use its configured default (from opencode.json). DO NOT try to guess via
         // mode=="primary" — only show main agents (mode != subagent && !hidden),
         // matching TUI tab-switching behavior.
-        val agentName = _uiState.value.selectedAgent
+        // 展示名→id 归一：UI 态存展示名（Build），服务端只认 id（build），这里是发送边界
+        val agentName = canonicalAgentId(_uiState.value.selectedAgent)
 
         // If stuck in stale streaming state (e.g. app killed during generation,
         // missed session.idle), abort the server-side generation and clear local state
@@ -1932,6 +1933,18 @@ class ChatViewModel @Inject constructor(
 
         val usageK = if (resolvedCount > 0) "${resolvedCount / 1000}K" else "0K"
         _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(contextUsageK = usageK)) }
+    }
+
+    /**
+     * 展示名→id 归一：对话框/记忆里存的是展示名（Build），服务端只认 id（build）。
+     * 名==id 的 agent 碰巧能过，大小写一差就 400。只在发送/建会话边界调用，UI 态保持展示名。
+     */
+    private fun canonicalAgentId(ref: String?): String? {
+        if (ref.isNullOrBlank()) return ref
+        val agents = _uiState.value.availableAgents + repository.getCachedAgents()
+        agents.find { it.id == ref }?.let { return it.id }
+        agents.find { it.name == ref }?.let { return it.id }
+        return ref
     }
 
     fun selectAgent(agentName: String?) {
