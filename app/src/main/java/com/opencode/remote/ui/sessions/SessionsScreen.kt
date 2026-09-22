@@ -65,6 +65,7 @@ fun SessionsScreen(
     onProjectClick: (String) -> Unit,
     onDisconnected: () -> Unit,
     viewModel: SessionsViewModel = hiltViewModel(),
+    onDirectChat: (String, String?) -> Unit = { _, _ -> },
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val s = AppLocale.strings
@@ -73,6 +74,19 @@ fun SessionsScreen(
     LifecycleResumeEffect(Unit) {
         viewModel.loadSessions()
         onPauseOrDispose { /* no-op */ }
+    }
+
+    // 启动直达置顶：开屏一次，钉住的会话还在就直跳聊天（被删则静默回落列表）
+    var directDone by remember { mutableStateOf(false) }
+    LaunchedEffect(uiState.pinnedSessionId, uiState.autoDirectPin, uiState.allSessions) {
+        if (!directDone && uiState.autoDirectPin) {
+            val pin = uiState.pinnedSessionId
+            val found = uiState.allSessions.find { it.id == pin }
+            if (pin != null && found != null) {
+                directDone = true
+                onDirectChat(pin, found.resolvedDirectory ?: uiState.pinnedSessionDir)
+            }
+        }
     }
 
     Scaffold(
@@ -188,6 +202,21 @@ fun SessionsScreen(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
+                        // 置顶卡：钉住的主会话，点即直达聊天（被删则不显示，静默回落）
+                        uiState.pinnedSessionId?.let { pinId ->
+                            uiState.allSessions.find { it.id == pinId }?.let { pinned ->
+                                item(key = "pinned_$pinId") {
+                                    PinnedSessionCard(
+                                        session = pinned,
+                                        autoDirect = uiState.autoDirectPin,
+                                        onOpen = { onDirectChat(pinId, pinned.resolvedDirectory ?: uiState.pinnedSessionDir) },
+                                        onUnpin = { viewModel.togglePin(pinId, null) },
+                                        onAutoDirectChange = viewModel::setAutoDirectPin,
+                                        modifier = Modifier.animateItemPlacement(tween(300)),
+                                    )
+                                }
+                            }
+                        }
                         timeGrouped.forEach { (timeGroup, projects) ->
                             stickyHeader(key = timeGroup.name) {
                                 Surface(
@@ -297,6 +326,91 @@ private fun ProjectCard(
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+// ─── 置顶卡：钉住的主会话 + 启动直达开关 ─────────────────────────────────
+
+@Composable
+private fun PinnedSessionCard(
+    session: SessionInfo,
+    autoDirect: Boolean,
+    onOpen: () -> Unit,
+    onUnpin: () -> Unit,
+    onAutoDirectChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val s = AppLocale.strings
+    val dir = session.resolvedDirectory
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpen)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PushPin,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp),
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = s.pinnedSection,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = session.title ?: session.slug ?: "Session ${session.id.take(8)}...",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    dir?.let {
+                        Text(
+                            text = it.replace('\\', '/').substringAfterLast('/'),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                IconButton(onClick = onUnpin) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = s.unpinSession,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = s.autoDirectPin,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Switch(
+                    checked = autoDirect,
+                    onCheckedChange = onAutoDirectChange,
+                )
+            }
         }
     }
 }
@@ -592,6 +706,8 @@ fun ProjectSessionsScreen(
                                                         onFork = { viewModel.forkSession(session.id, directory) },
                                                         onRename = { renameTarget = session },
                                                         onMove = { moveTarget = session },
+                                                        onPin = { viewModel.togglePin(session.id, session.resolvedDirectory) },
+                                                        isPinned = uiState.pinnedSessionId == session.id,
                                                         hasChildren = hasChildren,
                                                         isExpanded = isExpanded,
                                                         onToggleExpand = {
@@ -619,6 +735,8 @@ fun ProjectSessionsScreen(
                                                                     onFork = { viewModel.forkSession(childId, directory) },
                                                                     onRename = { renameTarget = childSession },
                                                                     onMove = { moveTarget = childSession },
+                                                                    onPin = { viewModel.togglePin(childId, childSession.resolvedDirectory) },
+                                                                    isPinned = uiState.pinnedSessionId == childId,
                                                                     isChild = true,
                                                                 )
                                                             }
@@ -863,6 +981,8 @@ private fun SessionCard(
     onFork: () -> Unit,
     onRename: () -> Unit = {},
     onMove: () -> Unit = {},
+    onPin: () -> Unit = {},
+    isPinned: Boolean = false,
     isChild: Boolean = false,
     hasChildren: Boolean = false,
     isExpanded: Boolean = false,
@@ -1001,6 +1121,14 @@ private fun SessionCard(
                         onClick = {
                             showMenu = false
                             onMove()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (isPinned) s.unpinSession else s.pinSession) },
+                        leadingIcon = { Icon(Icons.Default.PushPin, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            onPin()
                         },
                     )
                     DropdownMenuItem(

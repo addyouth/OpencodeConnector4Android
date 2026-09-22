@@ -65,6 +65,7 @@ fun ChatScreen(
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val templates by viewModel.messageTemplates.collectAsState()
     val listState = rememberLazyListState()
     val s = AppLocale.strings
     val density = LocalDensity.current
@@ -396,6 +397,11 @@ fun ChatScreen(
                             selectedModel = uiState.selectedModel,
                             onOpenSettings = viewModel::openSelectionDialog,
                             contextUsageK = uiState.contextUsageK,
+                            templates = templates,
+                            isCustomTemplate = viewModel::isCustomTemplate,
+                            onTemplateSend = viewModel::sendTemplate,
+                            onTemplateAdd = viewModel::addTemplateFromInput,
+                            onTemplateDelete = viewModel::removeTemplate,
                             onHistoryPrev = { viewModel.historyPrev() },
                             onHistoryNext = { viewModel.historyNext() },
                             onScrollToBottom = {

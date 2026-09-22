@@ -75,6 +75,10 @@ class ConnectionPreferences @Inject constructor(
         val DARK_MODE = booleanPreferencesKey("app_dark_mode")
         val HIDE_CHILD_SESSIONS = booleanPreferencesKey("hide_child_sessions")
         val LIST_DENSITY = stringPreferencesKey("list_density")
+        val PINNED_SESSION_ID = stringPreferencesKey("pinned_session_id")
+        val PINNED_SESSION_DIR = stringPreferencesKey("pinned_session_dir")
+        val AUTO_DIRECT_PIN = booleanPreferencesKey("auto_direct_pinned")
+        val CUSTOM_TEMPLATES = stringPreferencesKey("custom_templates")
     }
 
     private val masterKey by lazy {
@@ -196,6 +200,55 @@ class ConnectionPreferences @Inject constructor(
             context.dataStore.edit { it[Keys.HIDE_CHILD_SESSIONS] = enabled }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save hide child sessions", e)
+        }
+    }
+
+    /** 会话置顶：钉住 Vault 主会话，手机打开直达（单全局，不按服务器分）。 */
+    val pinnedSessionId: Flow<String?> = context.dataStore.data
+        .map { prefs -> prefs[Keys.PINNED_SESSION_ID] }
+        .catch { e -> Log.e(TAG, "Failed to read pinned session", e); emit(null) }
+
+    val pinnedSessionDir: Flow<String?> = context.dataStore.data
+        .map { prefs -> prefs[Keys.PINNED_SESSION_DIR] }
+        .catch { e -> Log.e(TAG, "Failed to read pinned dir", e); emit(null) }
+
+    suspend fun savePin(sessionId: String?, directory: String?) {
+        try {
+            context.dataStore.edit { prefs ->
+                if (sessionId != null) prefs[Keys.PINNED_SESSION_ID] = sessionId
+                else prefs.remove(Keys.PINNED_SESSION_ID)
+                if (directory != null) prefs[Keys.PINNED_SESSION_DIR] = directory
+                else prefs.remove(Keys.PINNED_SESSION_DIR)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save pin", e)
+        }
+    }
+
+    val autoDirectPin: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[Keys.AUTO_DIRECT_PIN] ?: false }
+        .catch { e -> Log.e(TAG, "Failed to read auto direct", e); emit(false) }
+
+    suspend fun saveAutoDirectPin(enabled: Boolean) {
+        try {
+            context.dataStore.edit { it[Keys.AUTO_DIRECT_PIN] = enabled }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save auto direct", e)
+        }
+    }
+
+    /** 快捷模板 Tier 1：自定义常用语（预设打卡/重启服务常驻，不可删）。 */
+    val customTemplates: Flow<List<String>> = context.dataStore.data
+        .map { prefs ->
+            prefs[Keys.CUSTOM_TEMPLATES]?.split("")?.filter { it.isNotEmpty() }?.take(10) ?: emptyList()
+        }
+        .catch { e -> Log.e(TAG, "Failed to read templates", e); emit(emptyList()) }
+
+    suspend fun saveCustomTemplates(templates: List<String>) {
+        try {
+            context.dataStore.edit { it[Keys.CUSTOM_TEMPLATES] = templates.take(10).joinToString("") }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save templates", e)
         }
     }
 

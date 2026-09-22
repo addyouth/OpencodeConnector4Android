@@ -31,6 +31,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DataUsage
@@ -385,6 +386,7 @@ internal fun ExpandableSegment(
 // ─── Chat Input Bar ───────────────────────────────────────────────────────
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 internal fun ChatInputBar(
     inputText: String,
     onInputChange: (String) -> Unit,
@@ -396,6 +398,12 @@ internal fun ChatInputBar(
     onScrollToBottom: () -> Unit = {},
     onHistoryPrev: () -> Boolean = { false },
     onHistoryNext: () -> Boolean = { false },
+    // 快捷模板 Tier 1：一键发常用语
+    templates: List<String> = emptyList(),
+    isCustomTemplate: (String) -> Boolean = { false },
+    onTemplateSend: (String) -> Unit = {},
+    onTemplateAdd: () -> Unit = {},
+    onTemplateDelete: (String) -> Unit = {},
 ) {
     val s = AppLocale.strings
 
@@ -503,6 +511,56 @@ internal fun ChatInputBar(
                             text = contextUsageK,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            // ── 快捷模板行 Tier 1：点即发；+ 存当前输入；长按删自定义 ──
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                templates.forEach { t ->
+                    val custom = isCustomTemplate(t)
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        tonalElevation = 1.dp,
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.combinedClickable(
+                            onClick = { onTemplateSend(t) },
+                            onLongClick = if (custom) ({ onTemplateDelete(t) }) else null,
+                        ),
+                    ) {
+                        Text(
+                            text = t,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
+                }
+                // +：把当前输入框内容存成模板
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    tonalElevation = 1.dp,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.clickable { onTemplateAdd() },
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }

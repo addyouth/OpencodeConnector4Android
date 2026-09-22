@@ -161,6 +161,9 @@ fun OConnectorApp(
                 onProjectClick = { directory ->
                     navController.navigate(Routes.projectSessions(directory))
                 },
+                onDirectChat = { sessionId, directory ->
+                    navController.navigate(Routes.chat(sessionId, directory))
+                },
                 onDisconnected = {
                     navController.navigate(Routes.SERVER_LIST) {
                         popUpTo(0) { inclusive = true }
