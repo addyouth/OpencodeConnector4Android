@@ -1,4 +1,4 @@
-package com.opencode.remote.data.repository
+﻿package com.opencode.remote.data.repository
 
 import android.content.Context
 import com.opencode.remote.data.api.OConnectorApiClient
@@ -8,7 +8,9 @@ import com.opencode.remote.data.api.dto.ModelInfo
 import com.opencode.remote.data.api.dto.ProviderInfo
 import com.opencode.remote.data.api.dto.ProviderList
 import com.opencode.remote.data.datastore.ConnectionConfig
+import com.opencode.remote.data.datastore.ConnectionPreferences
 import com.opencode.remote.data.network.NetworkMonitor
+import com.opencode.remote.data.sse.SseEventBus
 import com.opencode.remote.service.SseForegroundService
 import io.mockk.clearAllMocks
 import io.mockk.coEvery
@@ -29,6 +31,8 @@ class ConnectionGenerationTest {
     private lateinit var context: Context
     private lateinit var json: Json
     private lateinit var networkMonitor: NetworkMonitor
+    private lateinit var connectionPreferences: ConnectionPreferences
+    private lateinit var eventBus: SseEventBus
     private lateinit var repository: OConnectorRepositoryImpl
 
     @Before
@@ -38,7 +42,9 @@ class ConnectionGenerationTest {
         context = mockk(relaxed = true)
         json = Json { ignoreUnknownKeys = true }
         networkMonitor = mockk(relaxed = true)
-        repository = OConnectorRepositoryImpl(apiClient, sseClient, context, json, networkMonitor)
+        connectionPreferences = mockk(relaxed = true)
+        eventBus = SseEventBus()
+        repository = OConnectorRepositoryImpl(apiClient, sseClient, context, json, networkMonitor, connectionPreferences, eventBus)
 
         // Mock SseForegroundService companion object to prevent Android API calls
         mockkObject(SseForegroundService)

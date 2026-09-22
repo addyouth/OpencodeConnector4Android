@@ -439,6 +439,8 @@ class ChatViewModel @Inject constructor(
             // This eliminates race conditions where stale SSE events arrive
             // before streaming state is set, causing premature clearing.
             subscribeToEvents()
+            // 问答/权限轮询不再只靠 SSE 事件唤醒：流死时定时器就是唯一活路（安静期自退，不耗电）
+            ensurePermissionPoll()
 
             // ── Step 5: Restore blocking state from cache or message check ──
             // First try to restore from repository cache (survives ViewModel recreation).
@@ -1311,6 +1313,8 @@ class ChatViewModel @Inject constructor(
                     _uiState.value.sessionDirectory,
                 )
                 // prompt_async returns 204 immediately — SSE events drive the rest
+                // 轮询定时器同步起跑：SSE 正常时它是冗余，流死时它是唯一活路
+                ensurePermissionPoll()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to send message", e)
                 batchFlushJob?.cancel()

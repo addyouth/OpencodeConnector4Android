@@ -17,6 +17,7 @@ import com.opencode.remote.ui.chat.ModelSelectionRef
 import com.opencode.remote.ui.chat.QuestionRequestData
 import com.opencode.remote.data.datastore.ConnectionPreferences
 import com.opencode.remote.data.datastore.OfflineQueuedMessage
+import com.opencode.remote.data.sse.SseEventBus
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -231,6 +232,7 @@ class OConnectorRepositoryImpl @Inject constructor(
     private val json: Json,
     private val networkMonitor: NetworkMonitor,
     private val connectionPreferences: ConnectionPreferences,
+    private val eventBus: SseEventBus,
 ) : OConnectorRepository {
 
     companion object {
@@ -797,6 +799,12 @@ class OConnectorRepositoryImpl @Inject constructor(
                 val ok = try { requireClient().testConnection() } catch (_: Exception) { false }
                 if (ok) {
                     _serverReachable.value = true
+                    // HTTP 绿但 SSE 流死（serve 活着、长连接断了）：心跳看不见，只能看总线新鲜度
+                    if (System.currentTimeMillis() - eventBus.lastEventTime > 90_000) {
+                        Log.d(TAG, "ensureConnected: SSE stale >90s, restarting")
+                        val g = connectionGeneration.incrementAndGet()
+                        try { SseForegroundService.restart(context, g) } catch (_: Exception) {}
+                    }
                     return true
                 }
                 Log.d(TAG, "ensureConnected: connected but stale, restarting SSE")

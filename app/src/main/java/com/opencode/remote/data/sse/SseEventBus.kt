@@ -14,6 +14,10 @@ data class EventEnvelope(val event: ServerEvent, val generation: Long)
 class SseEventBus @Inject constructor() {
     @Volatile private var activeGeneration: Long = 0L
 
+    /** 最后经过的总线时间（含服务端 ping 行）——仓库用它发现“HTTP 绿但 SSE 流死”。 */
+    @Volatile var lastEventTime: Long = System.currentTimeMillis()
+        private set
+
     private val _events = MutableSharedFlow<EventEnvelope>(
         replay = 0,
         extraBufferCapacity = 256,
@@ -26,11 +30,13 @@ class SseEventBus @Inject constructor() {
             android.util.Log.d("SseEventBus", "Discarding stale event gen=$generation (active=$activeGeneration)")
             return
         }
+        lastEventTime = System.currentTimeMillis()
         _events.tryEmit(EventEnvelope(event, generation))
     }
 
     fun emit(event: ServerEvent) {
         // Backward-compatible overload — uses active generation
+        lastEventTime = System.currentTimeMillis()
         _events.tryEmit(EventEnvelope(event, activeGeneration))
     }
 

@@ -17,7 +17,6 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
-import java.io.IOException
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.net.ssl.SSLContext
@@ -72,7 +71,6 @@ class OConnectorSseClient @Inject constructor(
 
     companion object {
         private const val TAG = "OpenCodeSse"
-        private const val MAX_RETRIES = 5
         private const val INITIAL_DELAY_MS = 5000L
         private const val MAX_DELAY_MS = 30000L
     }
@@ -102,18 +100,17 @@ class OConnectorSseClient @Inject constructor(
      *
      * Uses channelFlow with retry loop: on connection failure the old HttpClient
      * is closed, a new one is created, and reconnection is attempted with
-     * exponential backoff (5s × 2^retry, capped at 30s). Up to [MAX_RETRIES]
-     * attempts are made; after that the flow terminates with an [IOException].
-     *
-     * Controlled by [autoReconnect] — when false, no retries are attempted.
+     * exponential backoff (5s × 2^retry, capped at 30s). Retries NEVER terminate
+     * while [autoReconnect] (lifeline): a connection that delivered ≥1 line resets
+     * the backoff; only cancellation ends the flow.
      */
     fun subscribeToEvents(): Flow<ServerEvent> = channelFlow {
         var retryCount = 0
-        var terminalError: IOException? = null
 
         while (isActive) {
             // Heartbeat timeout tracking — 45s without any SSE line triggers reconnect
             var lastEventTimeMs = System.currentTimeMillis()
+            var gotLine = false  // 本次连接是否见过行（ping 也算）——见过则退避清零
             val sseChannelRef = AtomicReference<ByteReadChannel?>(null)
             val heartbeatJob = launch {
                 while (isActive) {
@@ -149,6 +146,7 @@ class OConnectorSseClient @Inject constructor(
                         }
 
                         if (line == null) break
+                        gotLine = true  // 行=活着（含 ": ping"），本轮退避可清零
 
                         // Only process "data:" lines — each is a complete JSON event
                         if (line.startsWith("data:")) {
@@ -186,12 +184,10 @@ class OConnectorSseClient @Inject constructor(
                 sseChannelRef.set(null)
             }
 
-            // Shared reconnect logic for both normal disconnect and error
-            retryCount++
-            if (retryCount > MAX_RETRIES) {
-                terminalError = IOException("SSE connection failed after $MAX_RETRIES retries")
-                break
-            }
+            // 命根永不终局：见过行的连接退避清零；抖动连接退避到 30s 封顶后一直续。
+            // （终局抛异常曾让 service 悄悄停流：HTTP 心跳全绿、弹窗震动全灭。封顶重试的耗电
+            //  由前台服务常驻覆盖，单次失败 TCP 开销可忽略；真断网由仓库横条提示。）
+            retryCount = if (gotLine) 0 else retryCount + 1
 
             // Close old client and create new one to prevent resource leak
             synchronized(this) {
@@ -199,12 +195,11 @@ class OConnectorSseClient @Inject constructor(
                 sseClient = createSseClient(insecureTrust)
             }
 
-            val delayMs = minOf(INITIAL_DELAY_MS * (1L shl (retryCount - 1)), MAX_DELAY_MS)
-            Log.w(TAG, "SSE reconnecting in ${delayMs}ms (attempt $retryCount/$MAX_RETRIES)")
+            val shift = minOf((retryCount - 1).coerceAtLeast(0), 5)  // 2^5=32，5s*32 封顶 30s，不溢出
+            val delayMs = minOf(INITIAL_DELAY_MS * (1L shl shift), MAX_DELAY_MS)
+            Log.w(TAG, "SSE reconnecting in ${delayMs}ms (attempt ${retryCount + 1})")
             delay(delayMs)
         }
-
-        terminalError?.let { throw it }
     }
 
     fun close() {
