@@ -139,7 +139,9 @@ private fun <T> SelectionDropdownRow(
     optionContent: @Composable (BoxScope.(T?) -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val selectedLabel = if (selectedOption != null) optionLabel(selectedOption) else autoLabel
+    // 收起态与展开列表用同一套标签：auto 时显示解析出的默认值（如 big-pickle（默认）），
+    // 未知才回落 autoLabel——否则收起显示“自动”、展开第一行却是真名，两边打架
+    val selectedLabel = optionLabel(selectedOption)
 
     Column(modifier = modifier) {
         Text(
