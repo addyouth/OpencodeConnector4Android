@@ -47,7 +47,7 @@ fun RightPanel(
                 color = MaterialTheme.colorScheme.surfaceVariant,
             ) {
                 Text(
-                    text = currentPath.replace('\\', '/').substringAfterLast('/').ifEmpty { currentPath },
+                    text = currentPath.replace('\\', '/').trimEnd('/').substringAfterLast('/').ifEmpty { currentPath },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

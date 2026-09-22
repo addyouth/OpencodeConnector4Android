@@ -75,10 +75,10 @@ data class FileNode(
     val type: String = "file",
     val ignored: Boolean = false,
 ) {
-    /** v2 只有 path（相对、反斜杠分隔）→ 文件名本地取最后一段 */
+    /** v2 只有 path（相对、反斜杠分隔）→ 文件名本地取最后一段（目录可能带尾部分隔符，先 trim） */
     val displayName: String
         get() = if (name.isNotEmpty()) name
-            else path.replace('\\', '/').substringAfterLast('/').ifEmpty { path }
+            else path.replace('\\', '/').trimEnd('/').substringAfterLast('/').ifEmpty { path }
 }
 
 /**
