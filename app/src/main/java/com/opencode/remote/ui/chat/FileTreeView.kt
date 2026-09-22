@@ -3,6 +3,7 @@ package com.opencode.remote.ui.chat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -118,7 +119,11 @@ fun FileTreeView(
                 }
             }
             else -> {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    // 底部留白：末项不再被手势条/导航栏吃掉一半
+                    contentPadding = PaddingValues(bottom = 28.dp),
+                ) {
                     // ".." / Go back row for navigating to parent directory
                     if (showBack) {
                         item(key = "__go_back__") {

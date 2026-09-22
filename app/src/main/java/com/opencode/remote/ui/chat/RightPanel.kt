@@ -42,19 +42,19 @@ fun RightPanel(
         tonalElevation = 2.dp,
     ) {
         Column {
-            // Path breadcrumb
+            // Path breadcrumb（只显当前文件夹短名，全路径太长）
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
             ) {
                 Text(
-                    text = currentPath,
+                    text = currentPath.replace('\\', '/').substringAfterLast('/').ifEmpty { currentPath },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
                 )
             }
 
