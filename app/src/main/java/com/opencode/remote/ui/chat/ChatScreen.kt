@@ -419,9 +419,37 @@ fun ChatScreen(
                         .fillMaxSize()
                         .padding(padding),
                 ) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // 服务端不可达横条（Tailscale 断开/电梯断流）：别干等转圈，一键原地重连
+                        if (uiState.serverUnreachable) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.errorContainer,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text(
+                                        text = "服务器不可达（Tailscale/网络断开？），重连中…",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    TextButton(onClick = viewModel::retryConnection) {
+                                        Text("重试")
+                                    }
+                                }
+                            }
+                        }
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .weight(1f),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
@@ -540,6 +568,7 @@ fun ChatScreen(
                             }
                         }
                     }
+                    } // Column：不可达横条 + 消息列表
 
                     // Todo panel overlay
                     if (uiState.showTodoPanel) {

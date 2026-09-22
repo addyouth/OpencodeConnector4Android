@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -151,6 +152,8 @@ interface OConnectorRepository {
     fun getLastTestError(): String?
     /** 最近一次 createSession 失败的真实原因（成功时为 null）。 */
     fun getLastCreateError(): String?
+    /** 服务端可达性（心跳）：Tailscale 断开时 Android 网络仍在，只有这能发现。 */
+    val serverReachable: StateFlow<Boolean>
     /** v2 question 表单：唯一活路（无 SSE、无 permission 条目）。 */
     suspend fun listQuestionForms(sessionId: String): List<QuestionRequestData>
 
@@ -246,6 +249,11 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     override var activeSessionId: String? = null
     override var activeSessionDirectory: String? = null
+
+    /** 服务端心跳：Tailscale 断开时 Android 网络仍在，NetworkMonitor 看不见，只能靠轮询。 */
+    private val _serverReachable = MutableStateFlow(true)
+    override val serverReachable: StateFlow<Boolean> = _serverReachable.asStateFlow()
+    private var heartbeatJob: kotlinx.coroutines.Job? = null
 
     // ─── Disk persistence for state that must survive process death ───────
     private val statePrefs: SharedPreferences by lazy {
@@ -432,6 +440,46 @@ class OConnectorRepositoryImpl @Inject constructor(
             }
         }
         networkMonitor.start()
+        startHeartbeat()
+    }
+
+    /**
+     * 服务端心跳（15s 一次轻量 GET /api/project）：
+     * Tailscale 断开不断 Android 网络，NetworkMonitor 不会回调，只有这里能发现。
+     * 恢复时自动重启 SSE + 补发离线草稿，用户不用退到服务器列表手动重连。
+     */
+    private fun startHeartbeat() {
+        heartbeatJob?.cancel()
+        heartbeatJob = repoScope.launch {
+            while (true) {
+                delay(15_000)
+                if (!connected) break
+                val ok = try { requireClient().testConnection() } catch (_: Exception) { false }
+                val was = _serverReachable.value
+                if (ok != was) {
+                    _serverReachable.value = ok
+                    Log.d(TAG, "Heartbeat: reachable=$ok (was $was)")
+                }
+                if (!was && ok) {
+                    Log.d(TAG, "Heartbeat: server back, restarting SSE + flushing outbox")
+                    val restartGen = connectionGeneration.incrementAndGet()
+                    try { SseForegroundService.restart(context, restartGen) }
+                    catch (e: Exception) { Log.e(TAG, "Failed to restart SSE on heartbeat recovery", e) }
+                    try {
+                        val sent = flushOutbox()
+                        if (sent > 0) {
+                            withContext(Dispatchers.Main) {
+                                try {
+                                    android.widget.Toast.makeText(
+                                        context, "已重连，发出${sent}条离线草稿", android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    } catch (e: Exception) { Log.w(TAG, "flushOutbox on heartbeat recovery failed", e) }
+                }
+            }
+        }
     }
 
     override fun isOnline(): Boolean = try {
@@ -477,6 +525,9 @@ class OConnectorRepositoryImpl @Inject constructor(
      * Disconnect from the server.
      */
     override fun disconnect() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+        _serverReachable.value = true
         networkMonitor.stop()
         networkMonitor.onNetworkAvailable = null
         try { apiClient.close() } catch (_: Exception) {}

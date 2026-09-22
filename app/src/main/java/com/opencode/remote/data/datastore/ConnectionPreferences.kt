@@ -342,6 +342,51 @@ class ConnectionPreferences @Inject constructor(
         }
     }
 
+    /** 全局上次选择：新会话无专属偏好时继承（否则新会话永远 auto）。 */
+    suspend fun saveLastAgent(agent: String?) {
+        try {
+            context.dataStore.edit { prefs ->
+                if (agent != null) prefs[stringPreferencesKey("sel_agent_last")] = agent
+                else prefs.remove(stringPreferencesKey("sel_agent_last"))
+            }
+        } catch (e: Exception) { Log.e(TAG, "Failed to save last agent", e) }
+    }
+
+    suspend fun getLastAgent(): String? {
+        return try { context.dataStore.data.first()[stringPreferencesKey("sel_agent_last")] }
+        catch (e: Exception) { Log.e(TAG, "Failed to read last agent", e); null }
+    }
+
+    suspend fun saveLastModel(model: StoredModelSelection?) {
+        try {
+            context.dataStore.edit { prefs ->
+                if (model != null) prefs[stringPreferencesKey("sel_model_last")] = model.serialize()
+                else prefs.remove(stringPreferencesKey("sel_model_last"))
+            }
+        } catch (e: Exception) { Log.e(TAG, "Failed to save last model", e) }
+    }
+
+    suspend fun getLastModel(): StoredModelSelection? {
+        return try {
+            context.dataStore.data.first()[stringPreferencesKey("sel_model_last")]
+                ?.let { StoredModelSelection.deserialize(it) }
+        } catch (e: Exception) { Log.e(TAG, "Failed to read last model", e); null }
+    }
+
+    suspend fun saveLastVariant(variant: String?) {
+        try {
+            context.dataStore.edit { prefs ->
+                if (variant != null) prefs[stringPreferencesKey("sel_variant_last")] = variant
+                else prefs.remove(stringPreferencesKey("sel_variant_last"))
+            }
+        } catch (e: Exception) { Log.e(TAG, "Failed to save last variant", e) }
+    }
+
+    suspend fun getLastVariant(): String? {
+        return try { context.dataStore.data.first()[stringPreferencesKey("sel_variant_last")] }
+        catch (e: Exception) { Log.e(TAG, "Failed to read last variant", e); null }
+    }
+
     /** #14 输入历史（全局环形，\u001F 分隔，最多 50 条）。 */
     suspend fun saveInputHistory(history: List<String>) {
         try {

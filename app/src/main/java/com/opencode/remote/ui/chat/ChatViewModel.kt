@@ -147,6 +147,8 @@ data class ChatDisplayState(
     val showVcsDialog: Boolean = false,
     val vcsFiles: List<FileDiffInfo> = emptyList(),
     val isLoadingVcs: Boolean = false,
+    // 服务端可达性（心跳）：false 时顶栏下挂“不可达”横条
+    val serverUnreachable: Boolean = false,
 )
 
 data class ChatUiState(
@@ -193,6 +195,7 @@ data class ChatUiState(
     val isBlocked get() = chatDisplay.isBlocked
     val recoveryPending get() = chatDisplay.recoveryPending
     val selection get() = chatDisplay.selection
+    val serverUnreachable get() = chatDisplay.serverUnreachable
 }
 
 @HiltViewModel
@@ -211,6 +214,7 @@ class ChatViewModel @Inject constructor(
     private var streamingWatchdogJob: Job? = null
     private var blockingWatchdogJob: Job? = null
     private var lastSseEventTime = 0L  // Timestamp of last SSE event — used for fallback polling
+    private var serverReachCollecting = false  // 心跳流只收一次（initialize 会被反复调用）
 
     /**
      * IDs of messages that already completed — guards against late [message.updated] re-triggering streaming.
@@ -287,6 +291,31 @@ class ChatViewModel @Inject constructor(
         // Track active session for notification deep link
         repository.activeSessionId = sessionId
         repository.activeSessionDirectory = directory
+
+        // 服务端可达性：心跳流只收一次（initialize 会被反复调用），断连挂横条、恢复自动清
+        if (!serverReachCollecting) {
+            serverReachCollecting = true
+            viewModelScope.launch {
+                try {
+                    repository.serverReachable.collect { ok ->
+                        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(serverUnreachable = !ok)) }
+                        if (ok) {
+                            // 恢复后顺手把离线草稿补发（repository 心跳里也会发，双保险去重靠 outbox 清空）
+                            try {
+                                val sent = repository.flushOutbox()
+                                if (sent > 0) {
+                                    try { Toast.makeText(appContext, "已重连，发出${sent}条离线草稿", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        } else {
+            try {
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(serverUnreachable = !repository.serverReachable.value)) }
+            } catch (_: Exception) {}
+        }
 
         // These can run in parallel — they don't affect streaming state
         loadSessionInfo()
@@ -799,6 +828,8 @@ class ChatViewModel @Inject constructor(
                             streamingWatchdogJob?.cancel()
                             synchronized(pendingDeltas) { pendingDeltas.clear() }
                             repository.clearStreaming()
+                            // 前台盯着看：service 层免打扰，这里补震动（回 completed 信号）
+                            buzzOnce()
 
                             _uiState.update {
                                 it.copy(
@@ -1282,6 +1313,32 @@ class ChatViewModel @Inject constructor(
                 synchronized(pendingDeltas) { pendingDeltas.clear() }
                 repository.clearStreaming()
                 streamingWatchdogJob?.cancel()
+                // 电梯/断流：发送中途断网 → 自动存离线草稿，重连补发（消息不丢）
+                val msg = (e.localizedMessage ?: e.javaClass.simpleName).orEmpty()
+                val netHint = msg.contains("Unable to resolve host", true) ||
+                    msg.contains("failed to connect", true) ||
+                    msg.contains("Software caused connection abort", true) ||
+                    e is java.net.UnknownHostException ||
+                    e is java.net.ConnectException ||
+                    e is java.net.SocketTimeoutException ||
+                    e is java.io.IOException && msg.contains("timeout", true)
+                if (netHint) {
+                    try {
+                        val sel = _uiState.value.selection.committed
+                        repository.enqueueOffline(
+                            OfflineQueuedMessage(
+                                sessionId = _uiState.value.sessionId,
+                                text = text,
+                                agent = sel.agent ?: agentName,
+                                providerId = sel.model?.providerId,
+                                modelId = sel.model?.modelId,
+                                variant = sel.variant,
+                                ts = System.currentTimeMillis(),
+                            )
+                        )
+                        try { Toast.makeText(appContext, "发送失败，已存离线草稿，重连自动发送", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+                    } catch (_: Exception) {}
+                }
                 val s = com.opencode.remote.ui.strings.AppLocale.strings
                 _uiState.update {
                     it.copy(
@@ -1333,6 +1390,39 @@ class ChatViewModel @Inject constructor(
                     _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(contextUsageK = "${total / 1000}K")) }
                 }
             } catch (e: Exception) { Log.w(TAG, "server context usage failed, keep local", e) }
+        }
+    }
+
+    /** 横条“重试”：不断服务器列表，当前会话原地重连（心跳恢复 SSE + 补发草稿）。 */
+    fun retryConnection() {
+        val sid = _uiState.value.sessionId
+        val dir = _uiState.value.sessionDirectory
+        if (sid.isBlank()) return
+        viewModelScope.launch {
+            try {
+                val ok = try { repository.testConnection() } catch (_: Exception) { false }
+                if (ok) {
+                    try {
+                        val sent = repository.flushOutbox()
+                        if (sent > 0) {
+                            try { Toast.makeText(appContext, "已重连，发出${sent}条离线草稿", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+                        }
+                    } catch (_: Exception) {}
+                    _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(serverUnreachable = false, error = null)) }
+                    subscribeToEvents()
+                    initialize(sid, dir)
+                } else {
+                    val s = com.opencode.remote.ui.strings.AppLocale.strings
+                    val detail = try { repository.getLastTestError() } catch (_: Exception) { null }
+                    _uiState.update {
+                        it.copy(chatDisplay = it.chatDisplay.copy(
+                            error = s.errSendFailed.replace("%s", detail ?: "server unreachable"),
+                        ))
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "retryConnection failed", e)
+            }
         }
     }
 
@@ -1947,6 +2037,14 @@ class ChatViewModel @Inject constructor(
                 connectionPreferences.saveSelectedModel(sessionId, null)
             }
             connectionPreferences.saveSelectedVariant(sessionId, config.variant)
+            // 全局也存一份：新会话无专属偏好时继承，不用每次重选
+            connectionPreferences.saveLastAgent(config.agent)
+            if (config.model != null) {
+                connectionPreferences.saveLastModel(StoredModelSelection(config.model.providerId, config.model.modelId))
+            } else {
+                connectionPreferences.saveLastModel(null)
+            }
+            connectionPreferences.saveLastVariant(config.variant)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to persist selection", e)
         }
@@ -1956,9 +2054,13 @@ class ChatViewModel @Inject constructor(
         val sessionId = _uiState.value.sessionId
         if (sessionId.isBlank()) return
         try {
+            // 专属偏好 → 全局上次 → 会话带出值（loadSessionInfo 已播种）
             val agent = connectionPreferences.getSelectedAgent(sessionId)
+                ?: connectionPreferences.getLastAgent()
             val storedModel = connectionPreferences.getSelectedModel(sessionId)
+                ?: connectionPreferences.getLastModel()
             val variant = connectionPreferences.getSelectedVariant(sessionId)
+                ?: connectionPreferences.getLastVariant()
             val model = storedModel?.let { ModelSelectionRef(it.providerId, it.modelId) }
             // 新发现3：合并而非替换——偏好为空时保留会话带出的值（否则 restore 把 session agent/model 洗成 auto）
             val cur = _uiState.value.selection.committed
@@ -2177,6 +2279,8 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun showQuestionNotification(req: QuestionRequestData) {
+        // 震动先行：前台盯着看也要震（这是等回复的信号），只是不弹系统通知
+        buzzOnce()
         // P2：前台时气泡已可见，不再打扰
         if (AppForegroundTracker.isForeground) return
         try {
@@ -2189,11 +2293,13 @@ class ChatViewModel @Inject constructor(
                 .setAutoCancel(true)
                 .build()
             nm.notify(QUESTION_NOTIFICATION_ID, n)
-            buzzOnce()
+            // (buzz 已在入口震过，前台/后台都有份)
         } catch (e: Exception) { Log.w(TAG, "question notify failed", e) }
     }
 
     private fun showPermissionNotification(req: PermissionRequestData) {
+        // 震动先行：前台盯着看也要震，只是免系统通知
+        buzzOnce()
         // P2：前台时气泡已可见，不再打扰
         if (AppForegroundTracker.isForeground) return
         try {
@@ -2205,7 +2311,7 @@ class ChatViewModel @Inject constructor(
                 .setAutoCancel(true)
                 .build()
             nm.notify(PERMISSION_NOTIFICATION_ID, n)
-            buzzOnce()
+            // (buzz 已在入口震过，前台/后台都有份)
         } catch (e: Exception) { Log.w(TAG, "permission notify failed", e) }
     }
 
@@ -2287,6 +2393,7 @@ class ChatViewModel @Inject constructor(
     private fun startFallbackPolling(expectedSessionId: String) {
         pollingJob?.cancel()
         pollingJob = viewModelScope.launch {
+            var consecutiveFailures = 0
             while (isActive) {
                 delay(5000)  // Check every 5 seconds
                 if (_uiState.value.sessionId != expectedSessionId) break
@@ -2302,6 +2409,11 @@ class ChatViewModel @Inject constructor(
                         _uiState.value.sessionDirectory,
                         limit = 5,
                     )
+                    consecutiveFailures = 0
+                    // 轮询通了 → 心跳可能还没跑到，先把横条清掉
+                    if (_uiState.value.serverUnreachable) {
+                        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(serverUnreachable = false)) }
+                    }
                     val currentMessages = _uiState.value.messages
                     val currentLatestId = currentMessages.lastOrNull()?.id
                     val freshLatestId = freshMessages.lastOrNull()?.id
@@ -2313,6 +2425,11 @@ class ChatViewModel @Inject constructor(
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Fallback polling error", e)
+                    // 连续 3 次轮询失败（约 15s+ 无 SSE）→ 大概率断流，挂横条别让用户干等转圈
+                    consecutiveFailures++
+                    if (consecutiveFailures >= 3 && !_uiState.value.serverUnreachable) {
+                        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(serverUnreachable = true)) }
+                    }
                 }
             }
         }
