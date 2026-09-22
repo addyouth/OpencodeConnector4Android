@@ -1624,12 +1624,20 @@ class ChatViewModel @Inject constructor(
 
     fun toggleTodoPanel() {
         _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showTodoPanel = !it.chatDisplay.showTodoPanel)) }
+        // 右侧面板互斥：待办和文件面板同宽同边，同时开会叠出幽灵行
+        if (_uiState.value.showTodoPanel) {
+            _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(isPanelOpen = false)) }
+        }
     }
 
     // ── Panel Methods ──────────────────────────────────────────────────
 
     fun togglePanel() {
         _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(isPanelOpen = !it.chatDisplay.isPanelOpen)) }
+        // 右侧面板互斥：开文件面板时关待办面板
+        if (_uiState.value.isPanelOpen) {
+            _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showTodoPanel = false)) }
+        }
         if (!_uiState.value.isPanelOpen) return
         if (_uiState.value.panelFiles.isEmpty()) {
             navigateToDirectory(".")
@@ -1641,6 +1649,7 @@ class ChatViewModel @Inject constructor(
     fun setPanelOpen(open: Boolean) {
         _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(isPanelOpen = open)) }
         if (open) {
+            _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(showTodoPanel = false)) }
             if (_uiState.value.panelFiles.isEmpty()) {
                 navigateToDirectory(".")
             }
