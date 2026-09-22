@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -154,6 +155,11 @@ interface OConnectorRepository {
     fun getLastCreateError(): String?
     /** 服务端可达性（心跳）：Tailscale 断开时 Android 网络仍在，只有这能发现。 */
     val serverReachable: StateFlow<Boolean>
+    /**
+     * 后台回来/进程复活后自愈（不用退到服务器列表手动重连）：
+     * 已连接 → 测活，挂了重启 SSE 再测；未连接 → 用上次服务器直连（=服务器列表页自动连接同一套）。
+     */
+    suspend fun ensureConnected(): Boolean
     /** v2 question 表单：唯一活路（无 SSE、无 permission 条目）。 */
     suspend fun listQuestionForms(sessionId: String): List<QuestionRequestData>
 
@@ -780,6 +786,62 @@ class OConnectorRepositoryImpl @Inject constructor(
 
     override suspend fun testConnection(): Boolean =
         requireClient().testConnection()
+
+    /**
+     * 后台回来/进程复活后自愈：调用方（聊天/会话页 resume）先调它再干活。
+     * 睡眠后陈旧 socket、进程被杀后 restored 导航，两条都盖住。
+     */
+    override suspend fun ensureConnected(): Boolean {
+        return try {
+            if (connected) {
+                val ok = try { requireClient().testConnection() } catch (_: Exception) { false }
+                if (ok) {
+                    _serverReachable.value = true
+                    return true
+                }
+                Log.d(TAG, "ensureConnected: connected but stale, restarting SSE")
+                val g = connectionGeneration.incrementAndGet()
+                try { SseForegroundService.restart(context, g) } catch (_: Exception) {}
+                startHeartbeat()
+                val ok2 = try { requireClient().testConnection() } catch (_: Exception) { false }
+                _serverReachable.value = ok2
+                ok2
+            } else {
+                // 进程复活：用上次服务器直连（与服务器列表页自动连接同一套参数）
+                val lastId = try { connectionPreferences.lastActiveServerId.first() } catch (_: Exception) { null }
+                    ?: return false
+                val servers = try { connectionPreferences.savedServers.first() } catch (_: Exception) { emptyList() }
+                val server = servers.find { it.id == lastId } ?: return false
+                val password = try {
+                    withContext(Dispatchers.IO) { connectionPreferences.getServerPassword(lastId) }
+                } catch (_: Exception) { null } ?: ""
+                connect(ConnectionConfig(
+                    serverId = server.id,
+                    host = server.host,
+                    port = server.port,
+                    username = server.username,
+                    password = password,
+                    useTls = server.useTls,
+                    insecureTrust = server.insecureTrust,
+                ))
+                setServerName(server.name)
+                val ok = try { requireClient().testConnection() } catch (_: Exception) { false }
+                if (ok) {
+                    startSseService()
+                    try { connectionPreferences.saveLastActiveServerId(lastId) } catch (_: Exception) {}
+                    _serverReachable.value = true
+                    true
+                } else {
+                    try { disconnect() } catch (_: Exception) {}
+                    _serverReachable.value = false
+                    false
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "ensureConnected failed", e)
+            false
+        }
+    }
 
     override fun getLastTestError(): String? =
         try { apiClient.lastTestError } catch (_: Exception) { null }

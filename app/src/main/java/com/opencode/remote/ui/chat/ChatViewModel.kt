@@ -324,10 +324,14 @@ class ChatViewModel @Inject constructor(
         loadModels()
         loadServerDefaults()
 
-        // Core init: load messages → check state → subscribe to SSE (sequential)
+        // Core init: heal connection first (background return / process restore),
+        // then load messages → check state → subscribe to SSE (sequential)
         viewModelScope.launch {
             // Cache sessionId at launch time to detect stale coroutines
             val initSessionId = sessionId
+
+            // 自愈：后台回来连接已死时先续命，否则下面 getMessages 必跪、用户被迫退到服务器列表
+            try { repository.ensureConnected() } catch (_: Exception) {}
 
             // ── Step 1: Load messages from server (await synchronously) ──
             val hasData = _uiState.value.messages.isNotEmpty()

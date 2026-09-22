@@ -171,6 +171,8 @@ class SessionsViewModel @Inject constructor(
 
     fun loadSessions() {
         viewModelScope.launch {
+            // 自愈：后台回来先续命，否则列表必跪、用户被迫退到服务器页
+            try { repository.ensureConnected() } catch (_: Exception) {}
             // Only show spinner if there's no existing data (first load)
             val hasData = _uiState.value.sessions.isNotEmpty()
             if (!hasData) {
