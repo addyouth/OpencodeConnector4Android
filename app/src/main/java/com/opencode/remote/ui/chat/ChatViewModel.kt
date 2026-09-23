@@ -1383,6 +1383,8 @@ class ChatViewModel @Inject constructor(
                 tts = TextToSpeech(appContext) { status ->
                     ttsReady = status == TextToSpeech.SUCCESS
                     if (!ttsReady) {
+                        Log.w(TAG, "tts init status=$status")
+                        try { Toast.makeText(appContext, "语音引擎启动失败", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
                         stopSpeak()
                     } else {
                         // 简中不行退繁中/通用中文（部分引擎只认 CHINESE）
@@ -1404,6 +1406,7 @@ class ChatViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "tts init failed", e)
+                try { Toast.makeText(appContext, "语音引擎启动失败", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
                 stopSpeak()
             }
         }
@@ -1411,8 +1414,9 @@ class ChatViewModel @Inject constructor(
 
     private fun speakNow(messageId: String, clean: String, engine: TextToSpeech) {
         try {
+            utteranceStarted = false
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String) {}
+                override fun onStart(utteranceId: String) { utteranceStarted = true }
                 override fun onDone(utteranceId: String) {
                     if (utteranceId == lastUtteranceId) _speakingId.value = null
                 }
@@ -1428,13 +1432,38 @@ class ChatViewModel @Inject constructor(
             })
             val chunks = TtsCleaner.chunk(clean)
             lastUtteranceId = "oc${chunks.size - 1}"
+            // speak() 返回码必须查：ERROR 时无异常无回调，静默哑火
+            var rcOk = true
             chunks.forEachIndexed { i, c ->
-                engine.speak(c, if (i == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, "oc$i")
+                val rc = engine.speak(c, if (i == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, "oc$i")
+                if (rc == TextToSpeech.ERROR) rcOk = false
+            }
+            if (!rcOk) {
+                Log.w(TAG, "tts speak returned ERROR")
+                try { Toast.makeText(appContext, "朗读失败（引擎拒收）", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+                stopSpeak()
+                return
             }
             _speakingId.value = messageId
+            // 看门狗：8 秒没 onStart = 引擎僵死（init 回调丢了之类），有字为证再停
+            watchTtsStart(messageId)
         } catch (e: Exception) {
             Log.w(TAG, "tts speak failed", e)
+            try { Toast.makeText(appContext, "朗读失败", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
             stopSpeak()
+        }
+    }
+
+    private var utteranceStarted = false
+
+    private fun watchTtsStart(messageId: String) {
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(8000)
+            if (_speakingId.value == messageId && !utteranceStarted) {
+                Log.w(TAG, "tts watchdog: no onStart in 8s")
+                try { Toast.makeText(appContext, "语音引擎无响应", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+                stopSpeak()
+            }
         }
     }
 

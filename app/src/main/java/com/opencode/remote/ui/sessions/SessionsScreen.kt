@@ -76,19 +76,16 @@ fun SessionsScreen(
         onPauseOrDispose { /* no-op */ }
     }
 
-    // 启动直达置顶：开屏一次，第一个钉住的会话还在就直跳聊天（被删则静默回落列表）
-    var directDone by remember { mutableStateOf(false) }
-    // 手动点卡和自动跳都算“用过这次直达”：否则退回列表→resume 重载→effect 重跑→又跳回去，退不出来
-    fun openDirect(id: String, dir: String?) {
-        directDone = true
-        onDirectChat(id, dir)
-    }
+    // 启动直达置顶：开屏一次，第一个钉住的会话还在就直跳聊天（被删则静默回落列表）。
+    // 注意：绝不能用 plain remember 存"跳过"——导航离开组合即销毁，回来重置必重跳；
+    // 消费标记活在 VM（跟 back-stack entry 同寿），手动点卡也算消费。
     LaunchedEffect(uiState.pinned, uiState.autoDirectPin, uiState.allSessions) {
-        if (!directDone && uiState.autoDirectPin) {
+        if (!viewModel.isDirectConsumed() && uiState.autoDirectPin) {
             val pin = uiState.pinned.firstOrNull()
             val found = pin?.let { p -> uiState.allSessions.find { it.id == p.id } }
             if (pin != null && found != null) {
-                openDirect(pin.id, found.resolvedDirectory ?: pin.dir)
+                viewModel.markDirectConsumed()
+                onDirectChat(pin.id, found.resolvedDirectory ?: pin.dir)
             }
         }
     }
@@ -213,7 +210,10 @@ fun SessionsScreen(
                                     PinnedSessionCard(
                                         session = pinned,
                                         autoDirect = uiState.autoDirectPin,
-                                        onOpen = { openDirect(pin.id, pinned.resolvedDirectory ?: pin.dir) },
+                                        onOpen = {
+                                            viewModel.markDirectConsumed()
+                                            onDirectChat(pin.id, pinned.resolvedDirectory ?: pin.dir)
+                                        },
                                         onUnpin = { viewModel.togglePin(pin.id, null) },
                                         onAutoDirectChange = viewModel::setAutoDirectPin,
                                         modifier = Modifier.animateItemPlacement(tween(300)),

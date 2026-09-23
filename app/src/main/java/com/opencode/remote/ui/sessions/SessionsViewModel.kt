@@ -157,7 +157,23 @@ class SessionsViewModel @Inject constructor(
     }
 
     fun setAutoDirectPin(enabled: Boolean) {
+        if (enabled) rearmDirect()
         viewModelScope.launch { prefs.saveAutoDirectPin(enabled) }
+    }
+
+    /** 直达消费标记：必须活在 VM 里——SessionsScreen 的 plain remember 离开组合即销毁，
+     * 返回必重置，导致退回必重跳。VM 跟 back-stack entry 同寿，返回还在。 */
+    private var autoDirectConsumed = false
+
+    fun isDirectConsumed(): Boolean = autoDirectConsumed
+
+    fun markDirectConsumed() {
+        autoDirectConsumed = true
+    }
+
+    /** 重开开关=重新上膛，否则关一次就再也直达不了。 */
+    fun rearmDirect() {
+        autoDirectConsumed = false
     }
 
     private fun observeLanguage() {
