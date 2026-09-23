@@ -239,8 +239,8 @@ internal fun MarkdownText(
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         segments.forEach { segment ->
-            // 外层不再挂长按（会跟框内选词打架：选一半先整段复制+弹 toast，还压住系统条）
-            Box(
+            // 外层用 Column：段内 BasicTextField + 复制条上下排（Box 会重叠，之前按钮压字就是这么来的）
+            Column(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 when (segment) {
@@ -422,42 +422,74 @@ internal fun TextSelectionBar(
         clipboard.setText(AnnotatedString(t))
         Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
     }
-    // 只在有选区时出现：平时不占地方，需要时两键都在
+    // 选中才出现：不透明卡片沉底（之前半透明 Row 压在字上，看不清），
+    // 带已选预览——不用抬头找蓝柄，对着预览确认再拷
     if (selectedText.isNullOrEmpty()) return
-    Row(
-        modifier = Modifier.padding(top = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    val preview = selectedText.take(120)
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shadowElevation = 3.dp,
+        tonalElevation = 2.dp,
+        modifier = Modifier
+            .padding(top = 6.dp)
+            .fillMaxWidth(),
     ) {
-        Surface(
-            shape = RoundedCornerShape(8.dp),
-            tonalElevation = 1.dp,
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-            modifier = Modifier.clickable {
-                copy(selectedText)
-                onClearSelection()
-            },
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
-                text = "复制所选（${selectedText.length}字）",
-                style = MaterialTheme.typography.labelMedium,
+                text = "已选 ${selectedText.length} 字：$preview" + if (selectedText.length > 120) "…" else "",
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
             )
-        }
-        if (fullText.isNotEmpty()) {
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                tonalElevation = 1.dp,
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                modifier = Modifier.clickable { copy(fullText) },
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable {
+                        copy(selectedText)
+                        onClearSelection()
+                    },
+                ) {
+                    Text(
+                        text = "复制所选",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    )
+                }
+                if (fullText.isNotEmpty()) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.clickable { copy(fullText) },
+                    ) {
+                        Text(
+                            text = "复制整段",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.weight(1f))
                 Text(
-                    text = "复制整段",
+                    text = "收起",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .clickable { onClearSelection() }
+                        .padding(horizontal = 8.dp, vertical = 7.dp),
                 )
             }
         }
