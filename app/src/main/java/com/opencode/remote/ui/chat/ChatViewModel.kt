@@ -40,6 +40,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+
+/** 手机附件：先传（fs.write）后引（prompt files[]），uri 为服务端绝对路径。 */
+data class AttachedFile(
+    val uri: String,
+    val name: String,
+)
 
 /** A single segment in the streaming or completed assistant response. */
 @Serializable
@@ -150,6 +161,9 @@ data class ChatDisplayState(
     val isLoadingVcs: Boolean = false,
     // 服务端可达性（心跳）：false 时顶栏下挂“不可达”横条
     val serverUnreachable: Boolean = false,
+    // 附件（图片/文件）：待随下一次发送一起发出
+    val attachedFiles: List<AttachedFile> = emptyList(),
+    val isUploading: Boolean = false,
 )
 
 data class ChatUiState(
@@ -197,6 +211,8 @@ data class ChatUiState(
     val recoveryPending get() = chatDisplay.recoveryPending
     val selection get() = chatDisplay.selection
     val serverUnreachable get() = chatDisplay.serverUnreachable
+    val attachedFiles get() = chatDisplay.attachedFiles
+    val isUploading get() = chatDisplay.isUploading
 }
 
 @HiltViewModel
@@ -1252,6 +1268,159 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    // ── 附件（图片/文件）：先传后引 ──
+    /** 系统 picker 回调：读字节→图片压到可发尺寸→上传→挂到待发送。 */
+    fun attachPickedFiles(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        if (_uiState.value.sessionId.isBlank()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(isUploading = true)) }
+            try {
+                for (uri in uris) {
+                    if (_uiState.value.attachedFiles.size >= 5) {
+                        try { Toast.makeText(appContext, "一次最多 5 个附件", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+                        break
+                    }
+                    val (bytes, name) = loadUploadBytes(uri) ?: continue
+                    if (bytes.size > 10_000_000) {
+                        try { Toast.makeText(appContext, "文件太大（10MB 上限）：$name", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+                        continue
+                    }
+                    try {
+                        val serverPath = repository.uploadAttachment(bytes, name, _uiState.value.sessionDirectory)
+                        val cur = _uiState.value.attachedFiles + AttachedFile(serverPath, name)
+                        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(attachedFiles = cur)) }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "upload failed: $name", e)
+                        val s = com.opencode.remote.ui.strings.AppLocale.strings
+                        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(error = s.errSendFailed.replace("%s", e.localizedMessage ?: e.javaClass.simpleName))) }
+                    }
+                }
+            } finally {
+                _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(isUploading = false)) }
+            }
+        }
+    }
+
+    fun removeAttachment(file: AttachedFile) {
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(attachedFiles = it.chatDisplay.attachedFiles - file)) }
+    }
+
+    /** 读 picker 内容：图片最长边超 2048 或超 4MB 则转 JPEG 压小。 */
+    private fun loadUploadBytes(uri: Uri): Pair<ByteArray, String>? {
+        return try {
+            val cr = appContext.contentResolver
+            var name = "file"
+            try {
+                cr.query(uri, null, null, null, null)?.use { c ->
+                    val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (c.moveToFirst() && idx >= 0) c.getString(idx)?.takeIf { it.isNotBlank() }?.let { name = it }
+                }
+            } catch (_: Exception) {}
+            var bytes = cr.openInputStream(uri)?.use { it.readBytes() } ?: return null
+            val mime = try { cr.getType(uri) } catch (_: Exception) { null } ?: ""
+            if (mime.startsWith("image/")) {
+                try {
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                    val longest = maxOf(bounds.outWidth, bounds.outHeight)
+                    var sample = 1
+                    while (longest / sample > 2048) sample *= 2
+                    if (sample > 1 || bytes.size > 4_000_000) {
+                        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+                        if (bmp != null) {
+                            val out = java.io.ByteArrayOutputStream()
+                            bmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                            bmp.recycle()
+                            bytes = out.toByteArray()
+                            name = name.substringBeforeLast('.', name) + ".jpg"
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+            Pair(bytes, name)
+        } catch (e: Exception) {
+            Log.w(TAG, "read picked file failed", e)
+            null
+        }
+    }
+
+    // TTS read-aloud: speak text segments only.
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var lastUtteranceId = ""
+    private var pendingSpeak: Pair<String, String>? = null
+    private val _speakingId = MutableStateFlow<String?>(null)
+    val speakingId: StateFlow<String?> = _speakingId.asStateFlow()
+
+    /** Speaker button: tap again to stop; switching messages stops first. */
+    fun toggleSpeak(messageId: String, text: String) {
+        if (_speakingId.value == messageId) { stopSpeak(); return }
+        val clean = TtsCleaner.clean(text)
+        if (clean.isBlank()) return
+        stopSpeak()
+        val engine = tts
+        if (engine != null && ttsReady) {
+            speakNow(messageId, clean, engine)
+            return
+        }
+        if (engine == null) {
+            pendingSpeak = messageId to clean
+            _speakingId.value = messageId
+            try {
+                tts = TextToSpeech(appContext) { status ->
+                    ttsReady = status == TextToSpeech.SUCCESS
+                    if (!ttsReady) {
+                        stopSpeak()
+                    } else {
+                        val r = tts?.setLanguage(java.util.Locale.SIMPLIFIED_CHINESE)
+                        if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+                            try { Toast.makeText(appContext, "缺中文语音包，去系统设置下载", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
+                            ttsReady = false
+                            stopSpeak()
+                        } else {
+                            val eng = tts
+                            val pend = pendingSpeak
+                            pendingSpeak = null
+                            if (eng != null && pend != null) speakNow(pend.first, pend.second, eng)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "tts init failed", e)
+                stopSpeak()
+            }
+        }
+    }
+
+    private fun speakNow(messageId: String, clean: String, engine: TextToSpeech) {
+        try {
+            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String) {}
+                override fun onDone(utteranceId: String) {
+                    if (utteranceId == lastUtteranceId) _speakingId.value = null
+                }
+                override fun onError(utteranceId: String) { stopSpeak() }
+            })
+            val chunks = TtsCleaner.chunk(clean)
+            lastUtteranceId = "oc${chunks.size - 1}"
+            chunks.forEachIndexed { i, c ->
+                engine.speak(c, if (i == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, "oc$i")
+            }
+            _speakingId.value = messageId
+        } catch (e: Exception) {
+            Log.w(TAG, "tts speak failed", e)
+            stopSpeak()
+        }
+    }
+
+    private fun stopSpeak() {
+        try { tts?.stop() } catch (_: Exception) {}
+        pendingSpeak = null
+        _speakingId.value = null
+    }
+
     fun sendMessage() {
         val text = _uiState.value.inputText.trim()
         if (text.isEmpty()) return
@@ -1265,6 +1434,11 @@ class ChatViewModel @Inject constructor(
         if (_uiState.value.isBlocked && !_uiState.value.recoveryPending) return
         // P2 离线队列：无网时存草稿（带当前选定），重连自动发出
         if (!repository.isOnline()) {
+            // 附件走离线队列会塞爆 DataStore：无网时有附件直接拦下保留
+            if (_uiState.value.attachedFiles.isNotEmpty()) {
+                try { Toast.makeText(appContext, "附件需联网发送，已保留", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+                return
+            }
             val sel = _uiState.value.selection.committed
             viewModelScope.launch {
                 try {
@@ -1286,6 +1460,9 @@ class ChatViewModel @Inject constructor(
             return
         }
         pushInputHistory(text)
+
+        // 随本轮发出的附件（uri 为服务端绝对路径，转 file:// 正斜杠引用）
+        val files = _uiState.value.attachedFiles
 
         val state = _uiState.value
 
@@ -1329,12 +1506,14 @@ class ChatViewModel @Inject constructor(
                 id = "local_${System.currentTimeMillis()}",
                 role = "user",
             ),
-            parts = listOf(MessagePart(type = "text", text = text)),
+            parts = listOf(MessagePart(type = "text", text = text)) +
+                files.map { MessagePart(type = "file", text = it.name, name = it.name) },
         )
         _uiState.update {
             it.copy(
                 chatDisplay = it.chatDisplay.copy(
                     inputText = "",
+                    attachedFiles = emptyList(),
                     messages = it.messages + localUserMsg,
                     error = null,
                 ),
@@ -1360,6 +1539,7 @@ class ChatViewModel @Inject constructor(
                     _uiState.value.sessionId, text, agentName,
                     providerId, modelId, variant,
                     _uiState.value.sessionDirectory,
+                    files = files.map { V2FileAttachment(uri = "file://" + it.uri.replace('\\', '/'), name = it.name) }.ifEmpty { null },
                 )
                 // prompt_async returns 204 immediately — SSE events drive the rest
                 // 轮询定时器同步起跑：SSE 正常时它是冗余，流死时它是唯一活路
@@ -2703,5 +2883,7 @@ class ChatViewModel @Inject constructor(
         sseJob?.cancel()
         streamingWatchdogJob?.cancel()
         blockingWatchdogJob?.cancel()
+        try { tts?.shutdown() } catch (_: Exception) {}
+        tts = null
     }
 }

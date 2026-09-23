@@ -79,7 +79,7 @@ interface OConnectorRepository {
     // ─── Message Operations ──────────────────────────────────────────
 
     suspend fun getMessages(sessionId: String, directory: String? = null, limit: Int? = null): List<MessageInfo>
-    suspend fun sendMessage(sessionId: String, message: String, agent: String? = null, providerID: String? = null, modelID: String? = null, variant: String? = null, directory: String? = null)
+    suspend fun sendMessage(sessionId: String, message: String, agent: String? = null, providerID: String? = null, modelID: String? = null, variant: String? = null, directory: String? = null, files: List<V2FileAttachment>? = null)
     /** v2: 切换会话 agent（需求②进会话带主代理） */
     suspend fun switchAgent(sessionId: String, agent: String)
     /** v2: 切换会话模型（v1 每消息模型语义在 v2 下改为会话级） */
@@ -592,8 +592,12 @@ class OConnectorRepositoryImpl @Inject constructor(
     override suspend fun getMessages(sessionId: String, directory: String?, limit: Int?): List<MessageInfo> =
         requireClient().getMessages(sessionId, directory, limit)
 
-    override suspend fun sendMessage(sessionId: String, message: String, agent: String?, providerID: String?, modelID: String?, variant: String?, directory: String?) =
-        requireClient().sendMessage(sessionId, message, agent, providerID, modelID, variant, directory)
+    override suspend fun sendMessage(sessionId: String, message: String, agent: String?, providerID: String?, modelID: String?, variant: String?, directory: String?, files: List<V2FileAttachment>?) =
+        requireClient().sendMessage(sessionId, message, agent, providerID, modelID, variant, directory, files)
+
+    /** 手机发图/文件：先传后引（upload → prompt files[]）。 */
+    override suspend fun uploadAttachment(bytes: ByteArray, filename: String, directory: String?): String =
+        requireClient().uploadAttachment(bytes, filename, directory)
 
     override suspend fun switchAgent(sessionId: String, agent: String) =
         requireClient().switchAgent(sessionId, agent)

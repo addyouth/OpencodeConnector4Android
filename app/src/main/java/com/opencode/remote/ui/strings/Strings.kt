@@ -5,7 +5,8 @@ import androidx.compose.runtime.*
 // ─── Language state ────────────────────────────────────────────────
 
 object AppLocale {
-    var language by mutableStateOf("en")
+    // 默认中文（牧羊人母语；英文切了也记得住，下次启动按保存值回）
+    var language by mutableStateOf("zh")
     var darkMode by mutableStateOf(false)
     val strings: AppStrings get() = if (language == "zh") zhStrings else enStrings
 }

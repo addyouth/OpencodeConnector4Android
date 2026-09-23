@@ -3,6 +3,9 @@ package com.opencode.remote.ui.chat
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -66,6 +69,7 @@ fun ChatScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val templates by viewModel.messageTemplates.collectAsState()
+    val speakingId by viewModel.speakingId.collectAsState()
     val listState = rememberLazyListState()
     val s = AppLocale.strings
     val density = LocalDensity.current
@@ -109,6 +113,14 @@ fun ChatScreen(
     var templateDraftContent by remember { mutableStateOf("") }
     var templateEditingTitle by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
+
+    // 附件 picker：点回形针选图片，长按选任意文件
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) viewModel.attachPickedFiles(listOf(uri))
+    }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) viewModel.attachPickedFiles(listOf(uri))
+    }
 
     // Session initialization
     LaunchedEffect(sessionId) {
@@ -417,6 +429,13 @@ fun ChatScreen(
                                 templateEditingTitle = e.title
                                 showTemplateDialog = true
                             },
+                            attachments = uiState.attachedFiles,
+                            isUploading = uiState.isUploading,
+                            onAttachClick = {
+                                imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            },
+                            onAttachLongClick = { filePicker.launch("*/*") },
+                            onRemoveAttachment = viewModel::removeAttachment,
                             onHistoryPrev = { viewModel.historyPrev() },
                             onHistoryNext = { viewModel.historyNext() },
                             onScrollToBottom = {
@@ -583,6 +602,12 @@ fun ChatScreen(
                                             agentName = message.info.agent ?: "AI",
                                             segments = segments,
                                             isStreaming = false,
+                                            messageId = message.id,
+                                            speaking = speakingId == message.id,
+                                            onSpeakToggle = {
+                                                val t = segments.filter { it.type == "text" }.joinToString("\n") { it.text }
+                                                viewModel.toggleSpeak(message.id, t)
+                                            },
                                         )
                                     }
                                 }

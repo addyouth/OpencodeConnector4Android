@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.opencode.remote.data.api.dto.ServerInfo
 import com.opencode.remote.data.datastore.ConnectionConfig
+import com.opencode.remote.data.datastore.ConnectionPreferences
 import com.opencode.remote.data.datastore.ServerManager
 import com.opencode.remote.data.repository.OConnectorRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -23,6 +24,7 @@ import javax.inject.Inject
 class ServerListViewModel @Inject constructor(
     private val serverManager: ServerManager,
     private val repository: OConnectorRepository,
+    private val prefs: ConnectionPreferences,
 ) : ViewModel() {
 
     @Immutable
@@ -55,6 +57,12 @@ class ServerListViewModel @Inject constructor(
             if (lastId != null && !repository.isConnected) {
                 connectToServer(lastId)
             }
+        }
+    }
+
+    fun saveLanguage(lang: String) {
+        viewModelScope.launch {
+            try { prefs.saveLanguage(lang) } catch (_: Exception) {}
         }
     }
 

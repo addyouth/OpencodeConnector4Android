@@ -155,11 +155,11 @@ class ConnectionPreferences @Inject constructor(
 
     val language: Flow<String> = context.dataStore.data
         .map { prefs ->
-            prefs[Keys.LANGUAGE] ?: "en"
+            prefs[Keys.LANGUAGE] ?: "zh"
         }
         .catch { e ->
             Log.e(TAG, "Failed to read language", e)
-            emit("en")
+            emit("zh")
         }
 
     val darkMode: Flow<Boolean> = context.dataStore.data

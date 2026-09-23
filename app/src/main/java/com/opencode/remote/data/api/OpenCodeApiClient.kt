@@ -16,6 +16,7 @@ import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import io.ktor.http.content.ByteArrayContent
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -513,10 +514,10 @@ class OConnectorApiClient @Inject constructor(
     }
 
     /**
-     * POST /api/session/{id}/prompt（v2 PromptInput = {text, agents?, delivery?, resume?}）。
+     * POST /api/session/{id}/prompt（v2 PromptInput = {text, agents?, files?, delivery?, resume?}）。
      * v2 模型是会话级：若调用方带 providerID/modelID（v1 每消息语义），先切会话模型再发。
      */
-    suspend fun sendMessage(sessionId: String, text: String, agent: String? = null, providerID: String? = null, modelID: String? = null, variant: String? = null, directory: String? = null) {
+    suspend fun sendMessage(sessionId: String, text: String, agent: String? = null, providerID: String? = null, modelID: String? = null, variant: String? = null, directory: String? = null, files: List<V2FileAttachment>? = null) {
         if (modelID != null) {
             try { switchModel(sessionId, providerID, modelID, variant) }
             catch (e: Exception) { Log.w(TAG, "switchModel before prompt failed: ${e.message}") }
@@ -524,8 +525,31 @@ class OConnectorApiClient @Inject constructor(
         client.post(fullUrl("/api/session/$sessionId/prompt")) {
             // 卡死不再静默：非 2xx 直接抛，UI 第一秒报错而不是转到天荒地老
             expectSuccess = true
-            setBody(V2PromptBody(text = text, agents = agent?.let { listOf(V2AgentAttachment(name = it)) }))
+            setBody(V2PromptBody(text = text, agents = agent?.let { listOf(V2AgentAttachment(name = it)) }, files = files))
         }
+    }
+
+    /**
+     * POST /api/experimental/fs/write?path=<相对名>&location[directory]=<会话目录>（body 纯二进制）。
+     * 手机发图/文件唯一上传口（serve 无正式写口）。返回 data.path（服务端绝对路径）。
+     * （实弹验证：200 落盘；prompt 侧用 file:// + 正斜杠引用。）
+     */
+    suspend fun uploadAttachment(bytes: ByteArray, filename: String, directory: String? = null): String {
+        // 文件名消毒：去掉路径分隔符/特殊字符，避免 path 穿出上传目录
+        val safe = filename.replace(Regex("[\\\\/:*?\"<>|]"), "_").takeLast(80).ifBlank { "file" }
+        val rel = "oconnector-upload/${System.currentTimeMillis()}-$safe"
+        val el = postJson("/api/experimental/fs/write") {
+            url {
+                parameters.append("path", rel)
+                if (!directory.isNullOrEmpty()) parameters.append("location[directory]", directory)
+            }
+            setBody(ByteArrayContent(bytes, ContentType.Application.OctetStream))
+        }
+        val data = (el as? JsonObject)?.get("data")
+        val path = (data as? JsonObject)?.get("path")?.jsonPrimitive?.contentOrNull
+            ?: throw IllegalStateException("upload: no data.path in response")
+        Log.d(TAG, "uploadAttachment → $path (${bytes.size} bytes)")
+        return path
     }
 
     /** POST /api/session/{id}/agent → {agent}（需求②切代理） */

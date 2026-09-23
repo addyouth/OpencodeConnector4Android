@@ -107,6 +107,7 @@ class SessionsViewModel @Inject constructor(
         loadProjectName()
         loadCurrentServerName()
         observeDarkMode()
+        observeLanguage()
         observeListDensity()
         observePin()
         subscribeToSseEvents()
@@ -157,6 +158,14 @@ class SessionsViewModel @Inject constructor(
 
     fun setAutoDirectPin(enabled: Boolean) {
         viewModelScope.launch { prefs.saveAutoDirectPin(enabled) }
+    }
+
+    private fun observeLanguage() {
+        viewModelScope.launch {
+            prefs.language.collect { lang ->
+                AppLocale.language = lang
+            }
+        }
     }
 
     private fun observeListDensity() {

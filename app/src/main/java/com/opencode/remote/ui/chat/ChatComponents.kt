@@ -33,6 +33,9 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DataUsage
 import androidx.compose.material.icons.filled.ExpandLess
@@ -167,6 +170,9 @@ internal fun AiResponsePanel(
     agentName: String,
     segments: List<ResponseSegment>,
     isStreaming: Boolean,
+    messageId: String? = null,
+    speaking: Boolean = false,
+    onSpeakToggle: (() -> Unit)? = null,
 ) {
     val s = AppLocale.strings
 
@@ -176,12 +182,31 @@ internal fun AiResponsePanel(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-                agentName,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    agentName,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                // 喇叭：朗读本条正文（thinking/工具段不念）；仅完成态可念
+                if (messageId != null && onSpeakToggle != null) {
+                    IconButton(
+                        onClick = onSpeakToggle,
+                        modifier = Modifier.size(28.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (speaking) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = if (speaking) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(6.dp))
 
             segments.forEachIndexed { idx, seg ->
@@ -407,6 +432,12 @@ internal fun ChatInputBar(
     onTemplateSend: (TemplateEntry) -> Unit = {},
     onTemplateAdd: () -> Unit = {},
     onTemplateEdit: (TemplateEntry) -> Unit = {},
+    // 附件（图片/文件，先传后引）
+    attachments: List<AttachedFile> = emptyList(),
+    isUploading: Boolean = false,
+    onAttachClick: () -> Unit = {},
+    onAttachLongClick: () -> Unit = {},
+    onRemoveAttachment: (AttachedFile) -> Unit = {},
 ) {
     val s = AppLocale.strings
 
@@ -569,6 +600,62 @@ internal fun ChatInputBar(
                 }
             }
 
+            // ── 附件预览行：已传文件名 + ✕；上传中转圈 ──
+            if (attachments.isNotEmpty() || isUploading) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    attachments.forEach { f ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            tonalElevation = 1.dp,
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AttachFile,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = f.name,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                )
+                                IconButton(
+                                    onClick = { onRemoveAttachment(f) },
+                                    modifier = Modifier.size(24.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (isUploading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                }
+            }
+
             // ── Text input row (bottom) — no separator between strip and input ──
             Row(
                 modifier = Modifier
@@ -620,6 +707,31 @@ internal fun ChatInputBar(
                         }
                     },
                 )
+
+                // 回形针：点选图片，长按选任意文件（先传后引，随消息发出）
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .combinedClickable(
+                            onClick = onAttachClick,
+                            onLongClick = onAttachLongClick,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (isUploading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.AttachFile,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
 
                 FilledIconButton(
                     onClick = onSend,

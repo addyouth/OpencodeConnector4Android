@@ -127,6 +127,7 @@ fun OConnectorApp(
                 onToggleLanguage = {
                     val newLang = if (AppLocale.language == "en") "zh" else "en"
                     AppLocale.language = newLang
+                    viewModel.saveLanguage(newLang)
                 },
             )
         }

@@ -343,8 +343,17 @@ data class V2ModelRef(
 data class V2PromptBody(
     val text: String,
     val agents: List<V2AgentAttachment>? = null,
+    val files: List<V2FileAttachment>? = null,
     val delivery: String? = null,
     val resume: Boolean? = null,
+)
+
+/** v2 PromptInput.FileAttachment —— {uri(必填，file:// + 正斜杠)，name?, description?}（裸路径 400）。 */
+@Serializable
+data class V2FileAttachment(
+    val uri: String,
+    val name: String? = null,
+    val description: String? = null,
 )
 
 /** v2 Prompt.AgentAttachment —— {name(必填)}；字符串数组会被 400（Expected Prompt.AgentAttachment）。 */
