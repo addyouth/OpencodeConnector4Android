@@ -1438,6 +1438,21 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /** 被停用的引擎（默认查询不返回停用的，白名单了也看不见）。 */
+    @Suppress("DEPRECATION")
+    private fun queryDisabledTtsEngines(): List<String> {
+        return try {
+            val pm = appContext.packageManager
+            val intent = android.content.Intent("android.intent.action.TTS_SERVICE")
+            pm.queryIntentServices(intent, android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS)
+                .mapNotNull { it.serviceInfo?.packageName }
+                .distinct()
+        } catch (e: Exception) {
+            Log.w(TAG, "query disabled TTS engines failed", e)
+            emptyList()
+        }
+    }
+
     /** 默认引擎残了：枚举机上引擎顺位重试；一个没有就指路去装。 */
     private fun onTtsEngineFailed(failedEngine: String?, tried: Set<String>) {
         val done = tried + setOfNotNull(failedEngine)
@@ -1447,7 +1462,13 @@ class ChatViewModel @Inject constructor(
         ttsReady = false
         if (alts.isEmpty()) {
             if (failedEngine == null) {
-                try { Toast.makeText(appContext, "没装TTS语音引擎，去应用市场装一个（如 谷歌TTS / 讯飞语记）", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
+                // 停用的也翻出来：找到了指路去启用，真没有才指路去装
+                val disabled = queryDisabledTtsEngines()
+                if (disabled.isNotEmpty()) {
+                    try { Toast.makeText(appContext, "TTS引擎被停用：${disabled.take(2).joinToString("、")}，去设置→应用管理启用", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
+                } else {
+                    try { Toast.makeText(appContext, "没装TTS语音引擎，去应用市场装一个（如 谷歌TTS / 讯飞语记）", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
+                }
             } else {
                 try { Toast.makeText(appContext, "语音引擎启动失败", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
             }
