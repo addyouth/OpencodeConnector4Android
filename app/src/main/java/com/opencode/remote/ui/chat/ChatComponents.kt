@@ -33,6 +33,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
@@ -196,6 +197,7 @@ internal fun UserMessageItem(message: MessageInfo) {
 
 // ─── AI Response Panel ────────────────────────────────────────────────────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun AiResponsePanel(
     agentName: String,
@@ -204,6 +206,7 @@ internal fun AiResponsePanel(
     messageId: String? = null,
     speaking: Boolean = false,
     onSpeakToggle: (() -> Unit)? = null,
+    onSpeakSettings: (() -> Unit)? = null,
 ) {
     val s = AppLocale.strings
 
@@ -223,11 +226,16 @@ internal fun AiResponsePanel(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
                 )
-                // 喇叭：朗读本条正文（thinking/工具段不念）；仅完成态可念
+                // 喇叭：点朗读/停；长按进引擎手选（默认引擎是僵尸时亲手点名）
                 if (messageId != null && onSpeakToggle != null) {
-                    IconButton(
-                        onClick = onSpeakToggle,
-                        modifier = Modifier.size(28.dp),
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .combinedClickable(
+                                onClick = onSpeakToggle,
+                                onLongClick = onSpeakSettings,
+                            ),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             imageVector = if (speaking) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
@@ -837,4 +845,96 @@ internal fun TemplateEditDialog(
             }
         },
     )
+}
+
+// ─── TTS 引擎手选：长按喇叭进入，亲手点名（默认引擎是僵尸时用） ────────────
+
+@Composable
+internal fun TtsEngineDialog(
+    engines: List<TtsEngineInfo>,
+    currentPkg: String?,
+    systemDefault: String?,
+    onPick: (String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val s = AppLocale.strings
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("朗读引擎") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                TtsEngineRow(
+                    selected = currentPkg == null,
+                    title = "自动选择",
+                    sub = systemDefault?.let { "系统默认：$it" } ?: "跟随系统默认",
+                    onClick = { onPick(null) },
+                )
+                engines.forEach { e ->
+                    TtsEngineRow(
+                        selected = currentPkg == e.pkg,
+                        title = e.label,
+                        sub = e.pkg,
+                        onClick = { onPick(e.pkg) },
+                    )
+                }
+                if (engines.isEmpty()) {
+                    Text(
+                        text = "没扫到引擎：先装 sherpa 引擎 APK",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(s.close) }
+        },
+    )
+}
+
+@Composable
+private fun TtsEngineRow(
+    selected: Boolean,
+    title: String,
+    sub: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        tonalElevation = if (selected) 2.dp else 0.dp,
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = sub,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (selected) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
 }

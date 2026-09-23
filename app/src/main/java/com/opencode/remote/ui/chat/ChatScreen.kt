@@ -70,6 +70,7 @@ fun ChatScreen(
     val uiState by viewModel.uiState.collectAsState()
     val templates by viewModel.messageTemplates.collectAsState()
     val speakingId by viewModel.speakingId.collectAsState()
+    val ttsEngines by viewModel.ttsEngines.collectAsState()
     val listState = rememberLazyListState()
     val s = AppLocale.strings
     val density = LocalDensity.current
@@ -109,6 +110,8 @@ fun ChatScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
     // 快捷模板编辑框状态（null=新建，否则为被编辑项的原标题）
     var showTemplateDialog by remember { mutableStateOf(false) }
+    // TTS 引擎手选框（长按喇叭进入）
+    var showTtsDialog by remember { mutableStateOf(false) }
     var templateDraftTitle by remember { mutableStateOf("") }
     var templateDraftContent by remember { mutableStateOf("") }
     var templateEditingTitle by remember { mutableStateOf<String?>(null) }
@@ -608,6 +611,10 @@ fun ChatScreen(
                                                 val t = segments.filter { it.type == "text" }.joinToString("\n") { it.text }
                                                 viewModel.toggleSpeak(message.id, t)
                                             },
+                                            onSpeakSettings = {
+                                                viewModel.refreshTtsEngines()
+                                                showTtsDialog = true
+                                            },
                                         )
                                     }
                                 }
@@ -690,6 +697,20 @@ fun ChatScreen(
                     showTemplateDialog = false
                 },
                 onDismiss = { showTemplateDialog = false },
+            )
+        }
+
+        // TTS 引擎手选（默认引擎是僵尸时亲手点名）
+        if (showTtsDialog) {
+            TtsEngineDialog(
+                engines = ttsEngines,
+                currentPkg = viewModel.currentTtsEngine(),
+                systemDefault = viewModel.systemDefaultTts(),
+                onPick = {
+                    viewModel.setTtsEngine(it)
+                    showTtsDialog = false
+                },
+                onDismiss = { showTtsDialog = false },
             )
         }
 

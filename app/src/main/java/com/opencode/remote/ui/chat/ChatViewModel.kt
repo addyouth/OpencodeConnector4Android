@@ -52,6 +52,12 @@ data class AttachedFile(
     val name: String,
 )
 
+/** 机上 TTS 引擎（供手选对话框）。 */
+data class TtsEngineInfo(
+    val pkg: String,
+    val label: String,
+)
+
 /** A single segment in the streaming or completed assistant response. */
 @Serializable
 data class ResponseSegment(
@@ -232,6 +238,8 @@ class ChatViewModel @Inject constructor(
     private var blockingWatchdogJob: Job? = null
     private var lastSseEventTime = 0L  // Timestamp of last SSE event — used for fallback polling
     private var serverReachCollecting = false  // 心跳流只收一次（initialize 会被反复调用）
+    private var ttsPrefCollecting = false  // TTS 手选引擎同理
+    private var preferredTtsEngine: String? = null
 
     /**
      * IDs of messages that already completed — guards against late [message.updated] re-triggering streaming.
@@ -337,6 +345,15 @@ class ChatViewModel @Inject constructor(
             try {
                 _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(serverUnreachable = !repository.serverReachable.value)) }
             } catch (_: Exception) {}
+        }
+        // TTS 手选引擎：收一次，点喇叭时按它起引擎
+        if (!ttsPrefCollecting) {
+            ttsPrefCollecting = true
+            viewModelScope.launch {
+                try {
+                    connectionPreferences.ttsEngine.collect { preferredTtsEngine = it }
+                } catch (_: Exception) {}
+            }
         }
 
         // These can run in parallel — they don't affect streaming state
@@ -1373,17 +1390,59 @@ class ChatViewModel @Inject constructor(
             }
         } catch (_: Exception) {}
         stopSpeak()
+        // 手选优先：换了引擎必须拆旧重起，否则一直走缓存的僵尸
+        if (ttsEnginePkg != preferredTtsEngine) {
+            try { tts?.shutdown() } catch (_: Exception) {}
+            tts = null
+            ttsReady = false
+        }
         val engine = tts
         if (engine != null && ttsReady) {
             speakNow(messageId, clean, engine)
             return
         }
-        if (engine == null) {
+        if (tts == null) {
             pendingSpeak = messageId to clean
             _speakingId.value = messageId
-            startTtsEngine(null, emptySet())
+            startTtsEngine(preferredTtsEngine, emptySet())
         }
     }
+
+    // ── TTS 引擎手选（PM 名单对话框用） ──
+    private val _ttsEngines = MutableStateFlow<List<TtsEngineInfo>>(emptyList())
+    val ttsEngines: StateFlow<List<TtsEngineInfo>> = _ttsEngines.asStateFlow()
+
+    fun refreshTtsEngines() {
+        try {
+            _ttsEngines.value = queryTtsEngines().map { TtsEngineInfo(it.first, it.second) }
+        } catch (e: Exception) {
+            Log.w(TAG, "refresh engines failed", e)
+        }
+    }
+
+    /** 对话框显示当前手选值。 */
+    fun currentTtsEngine(): String? = preferredTtsEngine
+
+    fun setTtsEngine(pkg: String?) {
+        viewModelScope.launch {
+            try { connectionPreferences.saveTtsEngine(pkg) } catch (_: Exception) {}
+        }
+        preferredTtsEngine = pkg
+        // 立刻拆旧引擎：下次点喇叭用新的；正在念的停掉
+        stopSpeak()
+        try { tts?.shutdown() } catch (_: Exception) {}
+        tts = null
+        ttsReady = false
+        try {
+            Toast.makeText(appContext, if (pkg == null) "TTS：自动选择" else "TTS 引擎已指定，下次点喇叭生效", Toast.LENGTH_SHORT).show()
+        } catch (_: Exception) {}
+    }
+
+    /** 系统默认引擎包名（设置里勾的那个，仅展示用）。 */
+    fun systemDefaultTts(): String? = try {
+        android.provider.Settings.Secure.getString(appContext.contentResolver, "tts_default_synth")
+            ?.substringBefore('/')
+    } catch (_: Exception) { null }
 
     /** 起引擎（preferEngine=null 即系统默认）；ColorOS 这类默认引擎残了就往下顺位。 */
     private fun startTtsEngine(preferEngine: String?, tried: Set<String>) {

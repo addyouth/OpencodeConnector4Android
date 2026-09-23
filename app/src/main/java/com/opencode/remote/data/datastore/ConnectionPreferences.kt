@@ -80,6 +80,7 @@ class ConnectionPreferences @Inject constructor(
         val AUTO_DIRECT_PIN = booleanPreferencesKey("auto_direct_pinned")
         val CUSTOM_TEMPLATES = stringPreferencesKey("custom_templates")
         val PINNED_SESSIONS = stringPreferencesKey("pinned_sessions")
+        val TTS_ENGINE = stringPreferencesKey("tts_engine_pkg")
     }
 
     private val masterKey by lazy {
@@ -264,6 +265,22 @@ class ConnectionPreferences @Inject constructor(
             context.dataStore.edit { it[Keys.CUSTOM_TEMPLATES] = encoded }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save templates", e)
+        }
+    }
+
+    /** 手选 TTS 引擎（包名；null=自动）：默认引擎是僵尸时亲手点名。 */
+    val ttsEngine: Flow<String?> = context.dataStore.data
+        .map { prefs -> prefs[Keys.TTS_ENGINE] }
+        .catch { e -> Log.e(TAG, "Failed to read tts engine", e); emit(null) }
+
+    suspend fun saveTtsEngine(pkg: String?) {
+        try {
+            context.dataStore.edit { prefs ->
+                if (pkg != null) prefs[Keys.TTS_ENGINE] = pkg
+                else prefs.remove(Keys.TTS_ENGINE)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save tts engine", e)
         }
     }
 
