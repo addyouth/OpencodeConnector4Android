@@ -1419,12 +1419,29 @@ class ChatViewModel @Inject constructor(
         if (eng != null && pend != null) speakNow(pend.first, pend.second, eng)
     }
 
+    /** 机上 TTS 引擎直查（不走 TextToSpeech 实例——实例残了照样查；
+     * ColorOS 自带朗读/无障碍背后也必是其中之一，没有第二套）。 */
+    @Suppress("DEPRECATION")
+    private fun queryTtsEngines(): List<Pair<String, String>> {
+        return try {
+            val pm = appContext.packageManager
+            val intent = android.content.Intent("android.intent.action.TTS_SERVICE")
+            pm.queryIntentServices(intent, 0).mapNotNull { ri ->
+                val si = ri.serviceInfo ?: return@mapNotNull null
+                val label = try { si.loadLabel(pm)?.toString() } catch (_: Exception) { null }
+                    ?: si.packageName
+                si.packageName to label
+            }.distinctBy { it.first }
+        } catch (e: Exception) {
+            Log.w(TAG, "query TTS engines failed", e)
+            emptyList()
+        }
+    }
+
     /** 默认引擎残了：枚举机上引擎顺位重试；一个没有就指路去装。 */
     private fun onTtsEngineFailed(failedEngine: String?, tried: Set<String>) {
         val done = tried + setOfNotNull(failedEngine)
-        val alts: List<Pair<String, String>> = try {
-            tts?.engines?.map { it.name to it.label }?.filter { it.first !in done } ?: emptyList()
-        } catch (_: Exception) { emptyList() }
+        val alts = queryTtsEngines().filter { it.first !in done }
         try { tts?.shutdown() } catch (_: Exception) {}
         tts = null
         ttsReady = false
