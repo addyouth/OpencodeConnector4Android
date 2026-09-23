@@ -1357,6 +1357,8 @@ class ChatViewModel @Inject constructor(
     /** Speaker button: tap again to stop; switching messages stops first. */
     fun toggleSpeak(messageId: String, text: String) {
         if (_speakingId.value == messageId) { stopSpeak(); return }
+        ttsTapTime = System.currentTimeMillis()
+        ttsInitMs = -1L
         val clean = TtsCleaner.clean(text)
         // 静默失败是最差体验：没声必须有字
         if (clean.isBlank()) {
@@ -1385,6 +1387,7 @@ class ChatViewModel @Inject constructor(
 
     /** 起引擎（preferEngine=null 即系统默认）；ColorOS 这类默认引擎残了就往下顺位。 */
     private fun startTtsEngine(preferEngine: String?, tried: Set<String>) {
+        ttsEnginePkg = preferEngine
         try {
             val listener = TextToSpeech.OnInitListener { status -> onTtsInit(status, preferEngine, tried) }
             tts = if (preferEngine == null) TextToSpeech(appContext, listener)
@@ -1416,6 +1419,7 @@ class ChatViewModel @Inject constructor(
         val eng = tts
         val pend = pendingSpeak
         pendingSpeak = null
+        ttsInitMs = System.currentTimeMillis() - ttsTapTime
         if (eng != null && pend != null) speakNow(pend.first, pend.second, eng)
     }
 
@@ -1529,13 +1533,18 @@ class ChatViewModel @Inject constructor(
     }
 
     private var utteranceStarted = false
+    private var ttsTapTime = 0L
+    private var ttsInitMs = -1L
+    private var ttsEnginePkg: String? = null
 
     private fun watchTtsStart(messageId: String) {
         viewModelScope.launch {
-            kotlinx.coroutines.delay(8000)
+            // 冷启动模型加载（163MB 读盘+初始化）中端机常超 8 秒：8 秒掐首播等于永远播不出，放 30 秒
+            kotlinx.coroutines.delay(30000)
             if (_speakingId.value == messageId && !utteranceStarted) {
-                Log.w(TAG, "tts watchdog: no onStart in 8s")
-                try { Toast.makeText(appContext, "语音引擎无响应", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+                val pkg = ttsEnginePkg ?: "默认引擎"
+                Log.w(TAG, "tts watchdog: no onStart in 30s (engine=$pkg initMs=$ttsInitMs)")
+                try { Toast.makeText(appContext, "30秒无音频（$pkg，初始化${ttsInitMs}ms）", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
                 stopSpeak()
             }
         }
