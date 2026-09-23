@@ -75,6 +75,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.opencode.remote.data.api.dto.MessageInfo
@@ -137,28 +138,35 @@ internal fun UserMessageItem(message: MessageInfo) {
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
             Spacer(Modifier.height(4.dp))
-            // 同 AI 段：只读框拿选区，拖选后底下出自己的复制条（不指望系统条）
+            // 同 AI 段：只读框拿选区，选中后气泡贴选区（不用滑下去找）
             var sel by remember(message.id) { mutableStateOf<TextRange?>(null) }
+            var userLayout by remember(message.id) { mutableStateOf<TextLayoutResult?>(null) }
             val selectedText = sel?.let { r ->
                 val a = r.start.coerceIn(0, fullText.length)
                 val b = r.end.coerceIn(0, fullText.length)
                 if (b > a) fullText.substring(a, b) else null
             }
-            BasicTextField(
-                value = TextFieldValue(text = fullText, selection = sel ?: TextRange.Zero),
-                onValueChange = { sel = it.selection.takeIf { s -> !s.collapsed } },
-                readOnly = true,
-                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            TextSelectionBar(
-                selectedText = selectedText,
-                fullText = fullText,
-                onClearSelection = { sel = null },
-            )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                BasicTextField(
+                    value = TextFieldValue(text = fullText, selection = sel ?: TextRange.Zero),
+                    onValueChange = { sel = it.selection.takeIf { s -> !s.collapsed } },
+                    readOnly = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    onTextLayout = { userLayout = it },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                SelectionBubble(
+                    selectedText = selectedText,
+                    fullText = fullText,
+                    layout = userLayout,
+                    selection = sel,
+                    textLength = fullText.length,
+                    onClearSelection = { sel = null },
+                )
+            }
             // 已发附件行：不然发出去了自己都不知道发了哪张
             message.parts
                 .filter { it.type == "file" && (!it.text.isNullOrBlank() || !it.name.isNullOrBlank()) }
@@ -431,6 +439,7 @@ internal fun ExpandableSegment(
                     ) {
                         Column(modifier = Modifier.padding(8.dp)) {
                             var segSel by remember(text) { mutableStateOf<TextRange?>(null) }
+                            var segLayout by remember(text) { mutableStateOf<TextLayoutResult?>(null) }
                             val segSelected = segSel?.let { r ->
                                 val a = r.start.coerceIn(0, text.length)
                                 val b = r.end.coerceIn(0, text.length)
@@ -448,14 +457,18 @@ internal fun ExpandableSegment(
                                         color = contentColor,
                                     ),
                                     cursorBrush = SolidColor(contentColor),
+                                    onTextLayout = { segLayout = it },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
+                                SelectionBubble(
+                                    selectedText = segSelected,
+                                    fullText = text,
+                                    layout = segLayout,
+                                    selection = segSel,
+                                    textLength = text.length,
+                                    onClearSelection = { segSel = null },
+                                )
                             }
-                            TextSelectionBar(
-                                selectedText = segSelected,
-                                fullText = text,
-                                onClearSelection = { segSel = null },
-                            )
                         }
                     }
                 }

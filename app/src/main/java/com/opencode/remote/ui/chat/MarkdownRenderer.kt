@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,6 +42,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
@@ -53,6 +55,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import android.widget.Toast
 import com.opencode.remote.ui.strings.AppLocale
@@ -338,7 +341,8 @@ internal fun MarkdownText(
                         }
                     }
                     // 只读输入框当文本：能拿到选区（SelectionContainer 读不出选了啥），
-                    // 点链接弹框、点行内代码直接拷，拖选后底下出我们自己的复制条（不指望系统条）
+                    // 点链接弹框、点行内代码直接拷；选中后气泡跟在选区旁（官方 floating toolbar 同原理：
+                    // 以选区包围盒为锚点，见 TextToolbar.showMenu(rect)），不用滑下去找
                     var sel by remember(segment) { mutableStateOf<TextRange?>(null) }
                     var layout by remember(segment) { mutableStateOf<TextLayoutResult?>(null) }
                     val selectedText = sel?.let { r ->
@@ -346,34 +350,39 @@ internal fun MarkdownText(
                         val e = r.end.coerceIn(0, annotated.length)
                         if (e > s) annotated.substring(s, e) else null
                     }
-                    BasicTextField(
-                        value = TextFieldValue(annotatedString = annotated, selection = sel ?: TextRange.Zero),
-                        onValueChange = { sel = it.selection.takeIf { s -> !s.collapsed } },
-                        readOnly = true,
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = color),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        onTextLayout = { layout = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .pointerInput(annotated) {
-                                detectTapGestures { pos ->
-                                    if (annotated.isEmpty()) return@detectTapGestures
-                                    layout?.let { l ->
-                                        val off = l.getOffsetForPosition(pos).coerceIn(0, annotated.length - 1)
-                                        annotated.getStringAnnotations("URL", off, off).firstOrNull()?.let {
-                                            linkDialogUrl = it.item
-                                        } ?: annotated.getStringAnnotations("COPY", off, off).firstOrNull()?.let {
-                                            copyRaw(it.item)
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        BasicTextField(
+                            value = TextFieldValue(annotatedString = annotated, selection = sel ?: TextRange.Zero),
+                            onValueChange = { sel = it.selection.takeIf { s -> !s.collapsed } },
+                            readOnly = true,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = color),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            onTextLayout = { layout = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .pointerInput(annotated) {
+                                    detectTapGestures { pos ->
+                                        if (annotated.isEmpty()) return@detectTapGestures
+                                        layout?.let { l ->
+                                            val off = l.getOffsetForPosition(pos).coerceIn(0, annotated.length - 1)
+                                            annotated.getStringAnnotations("URL", off, off).firstOrNull()?.let {
+                                                linkDialogUrl = it.item
+                                            } ?: annotated.getStringAnnotations("COPY", off, off).firstOrNull()?.let {
+                                                copyRaw(it.item)
+                                            }
                                         }
                                     }
-                                }
-                            },
-                    )
-                    TextSelectionBar(
-                        selectedText = selectedText,
-                        fullText = segment.rawText(),
-                        onClearSelection = { sel = null },
-                    )
+                                },
+                        )
+                        SelectionBubble(
+                            selectedText = selectedText,
+                            fullText = segment.rawText(),
+                            layout = layout,
+                            selection = sel,
+                            textLength = annotated.length,
+                            onClearSelection = { sel = null },
+                        )
+                    }
                 }
                 }
             }
@@ -406,15 +415,22 @@ internal fun MarkdownText(
     }
 }
 
-// ─── 自带复制条：系统条不出时顶上（选中→复制所选/整段） ────────────────────
+// ─── 选中气泡：贴在选区旁的浮动条（不指望系统条；定位原理同 TextToolbar.showMenu(rect)） ──
+// 放在包着 BasicTextField 的 Box 里当第二个孩子，offset 锚点 = 选区首字符包围盒。
 
 @Composable
-internal fun TextSelectionBar(
+internal fun SelectionBubble(
     selectedText: String?,
     fullText: String,
+    layout: TextLayoutResult?,
+    selection: TextRange?,
+    textLength: Int,
     onClearSelection: () -> Unit,
 ) {
-    if (selectedText.isNullOrEmpty() && fullText.isEmpty()) return
+    if (selectedText.isNullOrEmpty()) return
+    val l = layout ?: return
+    val r = selection ?: return
+    if (r.collapsed) return
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     val copiedLabel = AppLocale.strings.copied
@@ -422,76 +438,69 @@ internal fun TextSelectionBar(
         clipboard.setText(AnnotatedString(t))
         Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
     }
-    // 选中才出现：不透明卡片沉底（之前半透明 Row 压在字上，看不清），
-    // 带已选预览——不用抬头找蓝柄，对着预览确认再拷
-    if (selectedText.isNullOrEmpty()) return
-    val preview = selectedText.take(120)
+    val density = LocalDensity.current
+    // 锚点：选区首行顶部，气泡坐它头上；顶到头了就改坐选区尾行脚下
+    val bubbleOffset: IntOffset? = remember(r, l, textLength, density) {
+        try {
+            val start = r.start.coerceIn(0, textLength)
+            val end = r.end.coerceIn(0, textLength)
+            if (end <= start || textLength <= 0) return@remember null
+            val line = l.getLineForOffset(start.coerceIn(0, textLength - 1))
+            val charBox = l.getBoundingBox(start.coerceIn(0, textLength - 1))
+            val gapPx = with(density) { 10.dp.toPx() }
+            val bubbleHPx = with(density) { 48.dp.toPx() }
+            var yPx = l.getLineTop(line) - bubbleHPx - gapPx
+            if (yPx < 0) {
+                val endLine = l.getLineForOffset(end.coerceIn(0, textLength - 1))
+                yPx = l.getLineBottom(endLine) + gapPx
+            }
+            val maxX = (l.size.width - with(density) { 200.dp.toPx() }).coerceAtLeast(0f)
+            IntOffset(charBox.left.coerceIn(0f, maxX).toInt(), yPx.toInt())
+        } catch (_: Exception) {
+            null
+        }
+    } ?: return
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shadowElevation = 3.dp,
-        tonalElevation = 2.dp,
-        modifier = Modifier
-            .padding(top = 6.dp)
-            .fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.inverseSurface,
+        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+        shadowElevation = 6.dp,
+        // Box 默认 TopStart 对齐：offset 直接就是相对段首的锚点位
+        modifier = Modifier.offset { bubbleOffset },
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
         ) {
             Text(
-                text = "已选 ${selectedText.length} 字：$preview" + if (selectedText.length > 120) "…" else "",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.clickable {
+                text = "复制 ${selectedText.length}字",
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                modifier = Modifier
+                    .clickable {
                         copy(selectedText)
                         onClearSelection()
-                    },
-                ) {
-                    Text(
-                        text = "复制所选",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        maxLines = 1,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                    )
-                }
-                if (fullText.isNotEmpty()) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        modifier = Modifier.clickable { copy(fullText) },
-                    ) {
-                        Text(
-                            text = "复制整段",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                        )
                     }
-                }
-                Spacer(Modifier.weight(1f))
+                    .padding(horizontal = 10.dp, vertical = 7.dp),
+            )
+            if (fullText.isNotEmpty()) {
                 Text(
-                    text = "收起",
+                    text = "整段",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     modifier = Modifier
-                        .clickable { onClearSelection() }
-                        .padding(horizontal = 8.dp, vertical = 7.dp),
+                        .clickable { copy(fullText) }
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
                 )
             }
+            Text(
+                text = "✕",
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                modifier = Modifier
+                    .clickable { onClearSelection() }
+                    .padding(horizontal = 10.dp, vertical = 7.dp),
+            )
         }
     }
 }

@@ -14,8 +14,8 @@ android {
         applicationId = "com.opencode.remote"
         minSdk = 26
         targetSdk = 34
-        versionCode = 63
-        versionName = "1.4.56"
+        versionCode = 64
+        versionName = "1.4.57"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }
