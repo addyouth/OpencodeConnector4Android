@@ -10,6 +10,7 @@ import com.opencode.remote.data.api.dto.MemoEntry
 import com.opencode.remote.data.api.dto.WorktreeInfo
 import com.opencode.remote.data.datastore.ConnectionPreferences
 import com.opencode.remote.data.datastore.MemoManager
+import com.opencode.remote.data.datastore.PinnedEntry
 import com.opencode.remote.data.repository.OConnectorRepository
 import com.opencode.remote.ui.strings.AppLocale
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -54,9 +55,8 @@ data class SessionsUiState(
     val expandedParents: Set<String> = emptySet(),
     /** 全量会话（含子，用于项目视图按目录+孤儿规则展示；顶层列表仍用 sessions） */
     val allSessions: List<SessionInfo> = emptyList(),
-    // 会话置顶：钉住主会话，打开直达
-    val pinnedSessionId: String? = null,
-    val pinnedSessionDir: String? = null,
+    // 会话置顶：可多个，直达用第一个
+    val pinned: List<PinnedEntry> = emptyList(),
     val autoDirectPin: Boolean = false,
     // Worktree manager state
     val showWorktreeDialog: Boolean = false,
@@ -131,13 +131,8 @@ class SessionsViewModel @Inject constructor(
 
     private fun observePin() {
         viewModelScope.launch {
-            prefs.pinnedSessionId.collect { id ->
-                _uiState.update { it.copy(pinnedSessionId = id) }
-            }
-        }
-        viewModelScope.launch {
-            prefs.pinnedSessionDir.collect { dir ->
-                _uiState.update { it.copy(pinnedSessionDir = dir) }
+            prefs.pinnedSessions.collect { pins ->
+                _uiState.update { it.copy(pinned = pins) }
             }
         }
         viewModelScope.launch {
@@ -147,14 +142,16 @@ class SessionsViewModel @Inject constructor(
         }
     }
 
-    /** 置顶/取消置顶（同 id 再点即取消）。 */
+    /** 置顶/取消置顶（同 id 再点即取消；最多 5 个）。 */
     fun togglePin(sessionId: String, directory: String?) {
         viewModelScope.launch {
-            if (_uiState.value.pinnedSessionId == sessionId) {
-                prefs.savePin(null, null)
+            val cur = _uiState.value.pinned
+            val next = if (cur.any { it.id == sessionId }) {
+                cur.filter { it.id != sessionId }
             } else {
-                prefs.savePin(sessionId, directory)
+                (cur + PinnedEntry(sessionId, directory)).takeLast(5)
             }
+            prefs.savePinned(next)
         }
     }
 

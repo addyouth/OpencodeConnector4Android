@@ -79,6 +79,7 @@ class ConnectionPreferences @Inject constructor(
         val PINNED_SESSION_DIR = stringPreferencesKey("pinned_session_dir")
         val AUTO_DIRECT_PIN = booleanPreferencesKey("auto_direct_pinned")
         val CUSTOM_TEMPLATES = stringPreferencesKey("custom_templates")
+        val PINNED_SESSIONS = stringPreferencesKey("pinned_sessions")
     }
 
     private val masterKey by lazy {
@@ -203,25 +204,32 @@ class ConnectionPreferences @Inject constructor(
         }
     }
 
-    /** 会话置顶：钉住 Vault 主会话，手机打开直达（单全局，不按服务器分）。 */
-    val pinnedSessionId: Flow<String?> = context.dataStore.data
-        .map { prefs -> prefs[Keys.PINNED_SESSION_ID] }
-        .catch { e -> Log.e(TAG, "Failed to read pinned session", e); emit(null) }
+    /** 会话置顶：可多个（Vault 主会话 + 写作等），直达用第一个（单全局，不按服务器分）。 */
+    val pinnedSessions: Flow<List<PinnedEntry>> = context.dataStore.data
+        .map { prefs ->
+            val raw = prefs[Keys.PINNED_SESSIONS]
+            if (raw != null) {
+                try {
+                    return@map json.decodeFromString(ListSerializer(PinnedEntry.serializer()), raw).take(5)
+                } catch (_: Exception) {}
+            }
+            // 迁移 1.4.42 单置顶
+            val oldId = prefs[Keys.PINNED_SESSION_ID]
+            if (oldId != null) listOf(PinnedEntry(oldId, prefs[Keys.PINNED_SESSION_DIR]))
+            else emptyList()
+        }
+        .catch { e -> Log.e(TAG, "Failed to read pins", e); emit(emptyList()) }
 
-    val pinnedSessionDir: Flow<String?> = context.dataStore.data
-        .map { prefs -> prefs[Keys.PINNED_SESSION_DIR] }
-        .catch { e -> Log.e(TAG, "Failed to read pinned dir", e); emit(null) }
-
-    suspend fun savePin(sessionId: String?, directory: String?) {
+    suspend fun savePinned(pins: List<PinnedEntry>) {
         try {
-            context.dataStore.edit { prefs ->
-                if (sessionId != null) prefs[Keys.PINNED_SESSION_ID] = sessionId
-                else prefs.remove(Keys.PINNED_SESSION_ID)
-                if (directory != null) prefs[Keys.PINNED_SESSION_DIR] = directory
-                else prefs.remove(Keys.PINNED_SESSION_DIR)
+            val encoded = json.encodeToString(ListSerializer(PinnedEntry.serializer()), pins.take(5))
+            context.dataStore.edit {
+                it[Keys.PINNED_SESSIONS] = encoded
+                it.remove(Keys.PINNED_SESSION_ID)
+                it.remove(Keys.PINNED_SESSION_DIR)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to save pin", e)
+            Log.e(TAG, "Failed to save pins", e)
         }
     }
 
@@ -237,16 +245,23 @@ class ConnectionPreferences @Inject constructor(
         }
     }
 
-    /** 快捷模板 Tier 1：自定义常用语（预设打卡/重启服务常驻，不可删）。 */
-    val customTemplates: Flow<List<String>> = context.dataStore.data
+    /** 快捷模板 Tier 1：标题（chip 显示）与内容（实际发送）可不同；预设常驻不可删。 */
+    val customTemplates: Flow<List<TemplateEntry>> = context.dataStore.data
         .map { prefs ->
-            prefs[Keys.CUSTOM_TEMPLATES]?.split("")?.filter { it.isNotEmpty() }?.take(10) ?: emptyList()
+            val raw = prefs[Keys.CUSTOM_TEMPLATES] ?: return@map emptyList<TemplateEntry>()
+            try {
+                json.decodeFromString(ListSerializer(TemplateEntry.serializer()), raw).take(10)
+            } catch (_: Exception) {
+                // 1.4.42 空串分隔的按字切脏数据直接丢弃
+                emptyList()
+            }
         }
         .catch { e -> Log.e(TAG, "Failed to read templates", e); emit(emptyList()) }
 
-    suspend fun saveCustomTemplates(templates: List<String>) {
+    suspend fun saveCustomTemplates(templates: List<TemplateEntry>) {
         try {
-            context.dataStore.edit { it[Keys.CUSTOM_TEMPLATES] = templates.take(10).joinToString("") }
+            val encoded = json.encodeToString(ListSerializer(TemplateEntry.serializer()), templates.take(10))
+            context.dataStore.edit { it[Keys.CUSTOM_TEMPLATES] = encoded }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save templates", e)
         }
@@ -494,4 +509,18 @@ data class OfflineQueuedMessage(
     val modelId: String? = null,
     val variant: String? = null,
     val ts: Long = 0L,
+)
+
+/** 快捷模板条目：标题（chip 显示）与内容（实际发送）可不同。 */
+@Serializable
+data class TemplateEntry(
+    val title: String = "",
+    val content: String = "",
+)
+
+/** 置顶条目：可多个，直达用第一个。 */
+@Serializable
+data class PinnedEntry(
+    val id: String = "",
+    val dir: String? = null,
 )

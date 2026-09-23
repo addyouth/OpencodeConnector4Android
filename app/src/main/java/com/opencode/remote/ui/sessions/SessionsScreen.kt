@@ -76,15 +76,15 @@ fun SessionsScreen(
         onPauseOrDispose { /* no-op */ }
     }
 
-    // 启动直达置顶：开屏一次，钉住的会话还在就直跳聊天（被删则静默回落列表）
+    // 启动直达置顶：开屏一次，第一个钉住的会话还在就直跳聊天（被删则静默回落列表）
     var directDone by remember { mutableStateOf(false) }
-    LaunchedEffect(uiState.pinnedSessionId, uiState.autoDirectPin, uiState.allSessions) {
+    LaunchedEffect(uiState.pinned, uiState.autoDirectPin, uiState.allSessions) {
         if (!directDone && uiState.autoDirectPin) {
-            val pin = uiState.pinnedSessionId
-            val found = uiState.allSessions.find { it.id == pin }
+            val pin = uiState.pinned.firstOrNull()
+            val found = pin?.let { p -> uiState.allSessions.find { it.id == p.id } }
             if (pin != null && found != null) {
                 directDone = true
-                onDirectChat(pin, found.resolvedDirectory ?: uiState.pinnedSessionDir)
+                onDirectChat(pin.id, found.resolvedDirectory ?: pin.dir)
             }
         }
     }
@@ -202,15 +202,15 @@ fun SessionsScreen(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        // 置顶卡：钉住的主会话，点即直达聊天（被删则不显示，静默回落）
-                        uiState.pinnedSessionId?.let { pinId ->
-                            uiState.allSessions.find { it.id == pinId }?.let { pinned ->
-                                item(key = "pinned_$pinId") {
+                        // 置顶卡：钉住的会话各一张，点即直达聊天（被删的不显示，静默回落）
+                        uiState.pinned.forEach { pin ->
+                            uiState.allSessions.find { it.id == pin.id }?.let { pinned ->
+                                item(key = "pinned_${pin.id}") {
                                     PinnedSessionCard(
                                         session = pinned,
                                         autoDirect = uiState.autoDirectPin,
-                                        onOpen = { onDirectChat(pinId, pinned.resolvedDirectory ?: uiState.pinnedSessionDir) },
-                                        onUnpin = { viewModel.togglePin(pinId, null) },
+                                        onOpen = { onDirectChat(pin.id, pinned.resolvedDirectory ?: pin.dir) },
+                                        onUnpin = { viewModel.togglePin(pin.id, null) },
                                         onAutoDirectChange = viewModel::setAutoDirectPin,
                                         modifier = Modifier.animateItemPlacement(tween(300)),
                                     )
@@ -707,7 +707,7 @@ fun ProjectSessionsScreen(
                                                         onRename = { renameTarget = session },
                                                         onMove = { moveTarget = session },
                                                         onPin = { viewModel.togglePin(session.id, session.resolvedDirectory) },
-                                                        isPinned = uiState.pinnedSessionId == session.id,
+                                                        isPinned = uiState.pinned.any { it.id == session.id },
                                                         hasChildren = hasChildren,
                                                         isExpanded = isExpanded,
                                                         onToggleExpand = {
@@ -736,7 +736,7 @@ fun ProjectSessionsScreen(
                                                                     onRename = { renameTarget = childSession },
                                                                     onMove = { moveTarget = childSession },
                                                                     onPin = { viewModel.togglePin(childId, childSession.resolvedDirectory) },
-                                                                    isPinned = uiState.pinnedSessionId == childId,
+                                                                    isPinned = uiState.pinned.any { it.id == childId },
                                                                     isChild = true,
                                                                 )
                                                             }

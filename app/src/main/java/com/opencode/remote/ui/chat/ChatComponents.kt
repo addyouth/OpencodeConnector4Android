@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
@@ -48,6 +49,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -74,6 +76,7 @@ import androidx.compose.ui.unit.dp
 import com.opencode.remote.data.api.dto.MessageInfo
 import com.opencode.remote.data.api.dto.MessagePart
 import com.opencode.remote.data.api.dto.ModelInfo
+import com.opencode.remote.data.datastore.TemplateEntry
 import com.opencode.remote.ui.strings.AppLocale
 import android.widget.Toast
 import kotlinx.coroutines.delay
@@ -398,12 +401,12 @@ internal fun ChatInputBar(
     onScrollToBottom: () -> Unit = {},
     onHistoryPrev: () -> Boolean = { false },
     onHistoryNext: () -> Boolean = { false },
-    // 快捷模板 Tier 1：一键发常用语
-    templates: List<String> = emptyList(),
+    // 快捷模板 Tier 1：一键发常用语（标题显示、内容发送）
+    templates: List<TemplateEntry> = emptyList(),
     isCustomTemplate: (String) -> Boolean = { false },
-    onTemplateSend: (String) -> Unit = {},
+    onTemplateSend: (TemplateEntry) -> Unit = {},
     onTemplateAdd: () -> Unit = {},
-    onTemplateDelete: (String) -> Unit = {},
+    onTemplateEdit: (TemplateEntry) -> Unit = {},
 ) {
     val s = AppLocale.strings
 
@@ -526,18 +529,18 @@ internal fun ChatInputBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 templates.forEach { t ->
-                    val custom = isCustomTemplate(t)
+                    val custom = isCustomTemplate(t.title)
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         tonalElevation = 1.dp,
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                         modifier = Modifier.combinedClickable(
                             onClick = { onTemplateSend(t) },
-                            onLongClick = if (custom) ({ onTemplateDelete(t) }) else null,
+                            onLongClick = if (custom) ({ onTemplateEdit(t) }) else null,
                         ),
                     ) {
                         Text(
-                            text = t,
+                            text = t.title,
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -636,4 +639,59 @@ internal fun ChatInputBar(
             }
         }
     }
+}
+
+// ─── 快捷模板编辑框：标题（chip 显示）与内容（实际发送）可不同 ───────────
+
+@Composable
+internal fun TemplateEditDialog(
+    initialTitle: String,
+    initialContent: String,
+    canDelete: Boolean,
+    onConfirm: (String, String) -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val s = AppLocale.strings
+    var title by remember(initialTitle) { mutableStateOf(initialTitle) }
+    var content by remember(initialContent) { mutableStateOf(initialContent) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(s.templateDialogTitle) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text(s.templateTitleLabel) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    label = { Text(s.templateContentLabel) },
+                    minLines = 2,
+                    maxLines = 5,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(title, content) },
+                enabled = title.isNotBlank() && content.isNotBlank(),
+            ) { Text(s.selectionConfirm) }
+        },
+        dismissButton = {
+            Row {
+                if (canDelete) {
+                    TextButton(onClick = onDelete) {
+                        Text(s.delete, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                TextButton(onClick = onDismiss) { Text(s.selectionCancel) }
+            }
+        },
+    )
 }

@@ -17,6 +17,7 @@ import com.opencode.remote.data.api.dto.*
 import com.opencode.remote.data.datastore.ConnectionPreferences
 import com.opencode.remote.data.datastore.OfflineQueuedMessage
 import com.opencode.remote.data.datastore.StoredModelSelection
+import com.opencode.remote.data.datastore.TemplateEntry
 import com.opencode.remote.data.repository.OConnectorRepository
 import com.opencode.remote.data.sse.SseEventBus
 import com.opencode.remote.ui.strings.AppLocale
@@ -244,8 +245,11 @@ class ChatViewModel @Inject constructor(
         private const val TODO_COMPLETED_NOTIFICATION_ID = 2001
         private const val PERMISSION_NOTIFICATION_ID = 2002
         private const val QUESTION_NOTIFICATION_ID = 2003
-        /** 快捷模板预设（常驻不可删） */
-        val DEFAULT_TEMPLATES = listOf("打卡", "重启服务")
+        /** 快捷模板预设（常驻不可删改） */
+        val DEFAULT_TEMPLATES = listOf(
+            TemplateEntry("打卡", "打卡"),
+            TemplateEntry("重启服务", "重启服务"),
+        )
     }
 
     /**
@@ -1206,40 +1210,44 @@ class ChatViewModel @Inject constructor(
     fun historyPrev(): Boolean = navigateHistory(-1)
     fun historyNext(): Boolean = navigateHistory(1)
 
-    // ── 快捷模板 Tier 1（一键发常用语，不用打字） ──
-    val messageTemplates: StateFlow<List<String>> =
+    // ── 快捷模板 Tier 1（一键发常用语，不用打字；标题与内容可不同） ──
+    val messageTemplates: StateFlow<List<TemplateEntry>> =
         connectionPreferences.customTemplates
             .map { DEFAULT_TEMPLATES + it }
             .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_TEMPLATES)
 
-    /** 点 chip 即发：把模板塞进输入框走正常发送链（历史/离线队列全吃上）。 */
-    fun sendTemplate(text: String) {
-        if (text.isBlank()) return
-        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(inputText = text)) }
+    /** 点 chip 即发内容：塞进输入框走正常发送链（历史/离线队列全吃上）。 */
+    fun sendTemplate(entry: TemplateEntry) {
+        if (entry.content.isBlank()) return
+        _uiState.update { it.copy(chatDisplay = it.chatDisplay.copy(inputText = entry.content)) }
         sendMessage()
     }
 
     /** 把当前输入框内容存成模板（上限 10，去重）。 */
-    fun addTemplateFromInput() {
-        val text = _uiState.value.inputText.trim()
-        if (text.isEmpty()) return
-        if (text in messageTemplates.value) return
+    /** 新建/更新模板（按标题去重，上限 10）。 */
+    fun saveTemplate(title: String, content: String) {
+        val t = title.trim()
+        val c = content.trim()
+        if (t.isEmpty() || c.isEmpty()) return
         viewModelScope.launch {
             try {
                 val cur = connectionPreferences.customTemplates.first()
-                connectionPreferences.saveCustomTemplates((cur + text).takeLast(10))
+                val next = (cur.filter { it.title != t } + TemplateEntry(t, c)).takeLast(10)
+                connectionPreferences.saveCustomTemplates(next)
                 try { Toast.makeText(appContext, "已存模板", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
             } catch (e: Exception) { Log.w(TAG, "save template failed", e) }
         }
     }
 
-    /** 预设不可删：UI 长按删除只挂自定义项 */
-    fun isCustomTemplate(text: String): Boolean = text !in DEFAULT_TEMPLATES
-    fun removeTemplate(text: String) {
+    /** 预设不可删/改：UI 长按编辑只挂自定义项 */
+    fun isCustomTemplate(title: String): Boolean = DEFAULT_TEMPLATES.none { it.title == title }
+    fun removeTemplate(title: String) {
         viewModelScope.launch {
             try {
                 val cur = connectionPreferences.customTemplates.first()
-                if (text in cur) connectionPreferences.saveCustomTemplates(cur - text)
+                if (cur.any { it.title == title }) {
+                    connectionPreferences.saveCustomTemplates(cur.filter { it.title != title })
+                }
             } catch (e: Exception) { Log.w(TAG, "remove template failed", e) }
         }
     }

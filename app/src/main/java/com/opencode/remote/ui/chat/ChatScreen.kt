@@ -103,6 +103,11 @@ fun ChatScreen(
     var initialScrollDone by remember(sessionId) { mutableStateOf(false) }
     var resumeKey by remember { mutableIntStateOf(0) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    // 快捷模板编辑框状态（null=新建，否则为被编辑项的原标题）
+    var showTemplateDialog by remember { mutableStateOf(false) }
+    var templateDraftTitle by remember { mutableStateOf("") }
+    var templateDraftContent by remember { mutableStateOf("") }
+    var templateEditingTitle by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
 
     // Session initialization
@@ -400,8 +405,18 @@ fun ChatScreen(
                             templates = templates,
                             isCustomTemplate = viewModel::isCustomTemplate,
                             onTemplateSend = viewModel::sendTemplate,
-                            onTemplateAdd = viewModel::addTemplateFromInput,
-                            onTemplateDelete = viewModel::removeTemplate,
+                            onTemplateAdd = {
+                                templateDraftTitle = uiState.inputText
+                                templateDraftContent = uiState.inputText
+                                templateEditingTitle = null
+                                showTemplateDialog = true
+                            },
+                            onTemplateEdit = { e ->
+                                templateDraftTitle = e.title
+                                templateDraftContent = e.content
+                                templateEditingTitle = e.title
+                                showTemplateDialog = true
+                            },
                             onHistoryPrev = { viewModel.historyPrev() },
                             onHistoryNext = { viewModel.historyNext() },
                             onScrollToBottom = {
@@ -630,6 +645,26 @@ fun ChatScreen(
                 onModelSelected = viewModel::updateDraftModel,
                 onVariantSelected = viewModel::updateDraftVariant,
                 onAgentInfo = viewModel::openAgentDetail,
+            )
+        }
+
+        // Template edit dialog (title shown on chip, content actually sent)
+        if (showTemplateDialog) {
+            TemplateEditDialog(
+                initialTitle = templateDraftTitle,
+                initialContent = templateDraftContent,
+                canDelete = templateEditingTitle != null,
+                onConfirm = { t, c ->
+                    val old = templateEditingTitle
+                    if (old != null && old != t.trim()) viewModel.removeTemplate(old)
+                    viewModel.saveTemplate(t, c)
+                    showTemplateDialog = false
+                },
+                onDelete = {
+                    templateEditingTitle?.let(viewModel::removeTemplate)
+                    showTemplateDialog = false
+                },
+                onDismiss = { showTemplateDialog = false },
             )
         }
 
