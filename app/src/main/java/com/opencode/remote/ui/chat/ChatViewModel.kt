@@ -1358,7 +1358,18 @@ class ChatViewModel @Inject constructor(
     fun toggleSpeak(messageId: String, text: String) {
         if (_speakingId.value == messageId) { stopSpeak(); return }
         val clean = TtsCleaner.clean(text)
-        if (clean.isBlank()) return
+        // 静默失败是最差体验：没声必须有字
+        if (clean.isBlank()) {
+            try { Toast.makeText(appContext, "这条没正文可念", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+            return
+        }
+        // 媒体音量 0 = 天王老子也听不见，先吱一声
+        try {
+            val am = appContext.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+            if (am != null && am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) == 0) {
+                try { Toast.makeText(appContext, "媒体音量为 0，先调大音量", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
         stopSpeak()
         val engine = tts
         if (engine != null && ttsReady) {
@@ -1374,7 +1385,11 @@ class ChatViewModel @Inject constructor(
                     if (!ttsReady) {
                         stopSpeak()
                     } else {
-                        val r = tts?.setLanguage(java.util.Locale.SIMPLIFIED_CHINESE)
+                        // 简中不行退繁中/通用中文（部分引擎只认 CHINESE）
+                        var r = tts?.setLanguage(java.util.Locale.SIMPLIFIED_CHINESE)
+                        if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+                            r = tts?.setLanguage(java.util.Locale.CHINESE)
+                        }
                         if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
                             try { Toast.makeText(appContext, "缺中文语音包，去系统设置下载", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
                             ttsReady = false
@@ -1401,7 +1416,15 @@ class ChatViewModel @Inject constructor(
                 override fun onDone(utteranceId: String) {
                     if (utteranceId == lastUtteranceId) _speakingId.value = null
                 }
-                override fun onError(utteranceId: String) { stopSpeak() }
+                override fun onError(utteranceId: String) {
+                    Log.w(TAG, "tts utterance error: $utteranceId")
+                    try {
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            try { Toast.makeText(appContext, "朗读失败", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+                        }
+                    } catch (_: Exception) {}
+                    stopSpeak()
+                }
             })
             val chunks = TtsCleaner.chunk(clean)
             lastUtteranceId = "oc${chunks.size - 1}"
