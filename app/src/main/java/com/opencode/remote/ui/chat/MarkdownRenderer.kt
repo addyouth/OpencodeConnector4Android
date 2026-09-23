@@ -440,7 +440,7 @@ internal fun SelectionBubble(
     }
     val density = LocalDensity.current
     // 锚点：选区首行顶部，气泡坐它头上；顶到头了就改坐选区尾行脚下
-    val bubbleOffset: IntOffset? = remember(r, l, textLength, density) {
+    val bubbleOffset: IntOffset = remember(r, l, textLength, density) {
         try {
             val start = r.start.coerceIn(0, textLength)
             val end = r.end.coerceIn(0, textLength)
