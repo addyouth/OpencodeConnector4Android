@@ -1,4 +1,4 @@
-package com.opencode.remote.ui.chat
+﻿package com.opencode.remote.ui.chat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -46,7 +46,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.input.TextRange
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
