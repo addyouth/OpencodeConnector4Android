@@ -97,6 +97,8 @@ interface OConnectorRepository {
     suspend fun enqueueOffline(item: OfflineQueuedMessage)
     suspend fun flushOutbox(): Int
     fun isOnline(): Boolean
+    /** 手机发图/文件：先传后引（upload → prompt files[]）。 */
+    suspend fun uploadAttachment(bytes: ByteArray, filename: String, directory: String?): String
     suspend fun replyQuestion(requestId: String, answer: Map<String, JsonElement>, directory: String? = null)
     suspend fun rejectQuestion(requestId: String, directory: String? = null)
 
