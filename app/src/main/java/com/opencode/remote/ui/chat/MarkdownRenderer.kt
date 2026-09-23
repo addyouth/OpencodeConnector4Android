@@ -1,10 +1,10 @@
 package com.opencode.remote.ui.chat
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,12 +37,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TextRange
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -200,7 +205,6 @@ internal fun MdSegment.rawText(): String = when (this) {
 
 // ─── Markdown Text Composable ─────────────────────────────────────────────
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun MarkdownText(
     text: String,
@@ -235,11 +239,9 @@ internal fun MarkdownText(
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         segments.forEach { segment ->
-            // 长按复制原始段（与框内手动选取共存：按中文字触发复制，按住拖动仍可选取）
+            // 外层不再挂长按（会跟框内选词打架：选一半先整段复制+弹 toast，还压住系统条）
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .combinedClickable(onClick = {}, onLongClick = { copyRaw(segment.rawText()) }),
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 when (segment) {
                 is MdSegment.CodeBlock -> {
@@ -319,28 +321,59 @@ internal fun MarkdownText(
                                     }
                                     pop()
                                 }
-                                is MdSpan.InlineCode -> withStyle(
-                                    SpanStyle(
-                                        fontFamily = FontFamily.Monospace,
-                                        background = codeBackground,
-                                        fontSize = MaterialTheme.typography.bodySmall.fontSize,
-                                    )
-                                ) {
-                                    append(" ${span.text} ")
+                                is MdSpan.InlineCode -> {
+                                    pushStringAnnotation("COPY", span.text)
+                                    withStyle(
+                                        SpanStyle(
+                                            fontFamily = FontFamily.Monospace,
+                                            background = codeBackground,
+                                            fontSize = MaterialTheme.typography.bodySmall.fontSize,
+                                        )
+                                    ) {
+                                        append(" ${span.text} ")
+                                    }
+                                    pop()
                                 }
                             }
                         }
                     }
-                    SelectionContainer {
-                        ClickableText(
-                            text = annotated,
-                            style = MaterialTheme.typography.bodyMedium.copy(color = color),
-                            onClick = { offset ->
-                                annotated.getStringAnnotations("URL", offset, offset)
-                                    .firstOrNull()?.let { linkDialogUrl = it.item }
-                            },
-                        )
+                    // 只读输入框当文本：能拿到选区（SelectionContainer 读不出选了啥），
+                    // 点链接弹框、点行内代码直接拷，拖选后底下出我们自己的复制条（不指望系统条）
+                    var sel by remember(segment) { mutableStateOf<TextRange?>(null) }
+                    var layout by remember(segment) { mutableStateOf<TextLayoutResult?>(null) }
+                    val selectedText = sel?.let { r ->
+                        val s = r.start.coerceIn(0, annotated.length)
+                        val e = r.end.coerceIn(0, annotated.length)
+                        if (e > s) annotated.substring(s, e) else null
                     }
+                    BasicTextField(
+                        value = TextFieldValue(annotatedString = annotated, selection = sel ?: TextRange.Zero),
+                        onValueChange = { sel = it.selection.takeIf { s -> !s.collapsed } },
+                        readOnly = true,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = color),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        onTextLayout = { layout = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .pointerInput(annotated) {
+                                detectTapGestures { pos ->
+                                    if (annotated.isEmpty()) return@detectTapGestures
+                                    layout?.let { l ->
+                                        val off = l.getOffsetForPosition(pos).coerceIn(0, annotated.length - 1)
+                                        annotated.getStringAnnotations("URL", off, off).firstOrNull()?.let {
+                                            linkDialogUrl = it.item
+                                        } ?: annotated.getStringAnnotations("COPY", off, off).firstOrNull()?.let {
+                                            copyRaw(it.item)
+                                        }
+                                    }
+                                }
+                            },
+                    )
+                    TextSelectionBar(
+                        selectedText = selectedText,
+                        fullText = segment.rawText(),
+                        onClearSelection = { sel = null },
+                    )
                 }
                 }
             }
@@ -370,5 +403,63 @@ internal fun MarkdownText(
                 }
             },
         )
+    }
+}
+
+// ─── 自带复制条：系统条不出时顶上（选中→复制所选/整段） ────────────────────
+
+@Composable
+internal fun TextSelectionBar(
+    selectedText: String?,
+    fullText: String,
+    onClearSelection: () -> Unit,
+) {
+    if (selectedText.isNullOrEmpty() && fullText.isEmpty()) return
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val copiedLabel = AppLocale.strings.copied
+    fun copy(t: String) {
+        clipboard.setText(AnnotatedString(t))
+        Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
+    }
+    // 只在有选区时出现：平时不占地方，需要时两键都在
+    if (selectedText.isNullOrEmpty()) return
+    Row(
+        modifier = Modifier.padding(top = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            tonalElevation = 1.dp,
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+            modifier = Modifier.clickable {
+                copy(selectedText)
+                onClearSelection()
+            },
+        ) {
+            Text(
+                text = "复制所选（${selectedText.length}字）",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+        if (fullText.isNotEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                tonalElevation = 1.dp,
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.clickable { copy(fullText) },
+            ) {
+                Text(
+                    text = "复制整段",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+        }
     }
 }

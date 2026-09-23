@@ -29,7 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
@@ -64,10 +64,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -75,6 +73,8 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TextRange
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.opencode.remote.data.api.dto.MessageInfo
@@ -82,7 +82,6 @@ import com.opencode.remote.data.api.dto.MessagePart
 import com.opencode.remote.data.api.dto.ModelInfo
 import com.opencode.remote.data.datastore.TemplateEntry
 import com.opencode.remote.ui.strings.AppLocale
-import android.widget.Toast
 import kotlinx.coroutines.delay
 
 // ─── Message Segment Parsing ─────────────────────────────────────────────
@@ -121,27 +120,16 @@ internal fun parseMessageSegments(message: MessageInfo): List<ResponseSegment> {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun UserMessageItem(message: MessageInfo) {
-    val clipboard = LocalClipboardManager.current
-    val context = LocalContext.current
-    val copiedLabel = AppLocale.strings.copied
+    val s = AppLocale.strings
+    val fullText = message.parts
+        .filter { it.type == "text" && !it.text.isNullOrBlank() }
+        .joinToString("\n") { it.text!! }
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.primaryContainer,
-        modifier = Modifier.fillMaxWidth().combinedClickable(
-            onClick = {},
-            onLongClick = {
-                val raw = message.parts
-                    .filter { it.type == "text" && !it.text.isNullOrBlank() }
-                    .joinToString("\n") { it.text!! }
-                if (raw.isNotEmpty()) {
-                    clipboard.setText(AnnotatedString(raw))
-                    Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
-                }
-            },
-        ),
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            val s = AppLocale.strings
             Text(
                 s.me,
                 style = MaterialTheme.typography.labelSmall,
@@ -149,17 +137,28 @@ internal fun UserMessageItem(message: MessageInfo) {
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
             Spacer(Modifier.height(4.dp))
-            message.parts
-                .filter { it.type == "text" && !it.text.isNullOrBlank() }
-                .forEach { part ->
-                    SelectionContainer {
-                        Text(
-                            text = part.text!!,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        )
-                    }
-                }
+            // 同 AI 段：只读框拿选区，拖选后底下出自己的复制条（不指望系统条）
+            var sel by remember(message.id) { mutableStateOf<TextRange?>(null) }
+            val selectedText = sel?.let { r ->
+                val a = r.start.coerceIn(0, fullText.length)
+                val b = r.end.coerceIn(0, fullText.length)
+                if (b > a) fullText.substring(a, b) else null
+            }
+            BasicTextField(
+                value = TextFieldValue(text = fullText, selection = sel ?: TextRange.Zero),
+                onValueChange = { sel = it.selection.takeIf { s -> !s.collapsed } },
+                readOnly = true,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            TextSelectionBar(
+                selectedText = selectedText,
+                fullText = fullText,
+                onClearSelection = { sel = null },
+            )
             // 已发附件行：不然发出去了自己都不知道发了哪张
             message.parts
                 .filter { it.type == "file" && (!it.text.isNullOrBlank() || !it.name.isNullOrBlank()) }
@@ -430,18 +429,33 @@ internal fun ExpandableSegment(
                         shape = RoundedCornerShape(6.dp),
                         color = containerColor.copy(alpha = 0.6f),
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .horizontalScroll(rememberScrollState())
-                                .padding(8.dp),
-                        ) {
-                            SelectionContainer {
-                                Text(
-                                    text = text,
-                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                                    color = contentColor,
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            var segSel by remember(text) { mutableStateOf<TextRange?>(null) }
+                            val segSelected = segSel?.let { r ->
+                                val a = r.start.coerceIn(0, text.length)
+                                val b = r.end.coerceIn(0, text.length)
+                                if (b > a) text.substring(a, b) else null
+                            }
+                            Box(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            ) {
+                                BasicTextField(
+                                    value = TextFieldValue(text = text, selection = segSel ?: TextRange.Zero),
+                                    onValueChange = { segSel = it.selection.takeIf { s -> !s.collapsed } },
+                                    readOnly = true,
+                                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        color = contentColor,
+                                    ),
+                                    cursorBrush = SolidColor(contentColor),
+                                    modifier = Modifier.fillMaxWidth(),
                                 )
                             }
+                            TextSelectionBar(
+                                selectedText = segSelected,
+                                fullText = text,
+                                onClearSelection = { segSel = null },
+                            )
                         }
                     }
                 }
