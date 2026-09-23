@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,11 +21,13 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,7 +41,9 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextDecoration
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -60,6 +65,8 @@ internal sealed class MdSpan {
     data class Italic(val text: String) : MdSpan()
     data class InlineCode(val text: String) : MdSpan()
     data class Plain(val text: String) : MdSpan()
+    /** 链接：[显示](url) 或裸 URL——点弹框（打开/复制整条），不再靠系统选词 */
+    data class Link(val text: String, val url: String) : MdSpan()
 }
 
 // ─── Markdown Parsing ─────────────────────────────────────────────────────
@@ -102,6 +109,56 @@ internal fun parseMarkdown(text: String): List<MdSegment> {
 }
 
 internal fun parseInlineSpans(text: String): List<MdSpan> {
+    // 先按 [t](u) 切块（块内 Plain 再切裸链接），最后 Plain 块才跑 **/粗体/代码旧逻辑
+    val out = mutableListOf<MdSpan>()
+    val mdLink = Regex("""\[([^\]\n]+)\]\(([^)\s]+)\)""")
+    var lastEnd = 0
+    val chunks = mutableListOf<Pair<String, MatchResult?>>()
+    for (m in mdLink.findAll(text)) {
+        if (m.range.first > lastEnd) chunks.add(text.substring(lastEnd, m.range.first) to null)
+        chunks.add("" to m)
+        lastEnd = m.range.last + 1
+    }
+    if (lastEnd < text.length) chunks.add(text.substring(lastEnd) to null)
+    if (chunks.isEmpty()) chunks.add(text to null)
+    for ((plain, m) in chunks) {
+        if (m != null) {
+            out.add(MdSpan.Link(m.groupValues[1], m.groupValues[2]))
+        } else {
+            for (sub in splitBareUrls(plain)) {
+                if (sub.second != null) out.add(MdSpan.Link(sub.first, sub.first))
+                else out.addAll(parseRichPlain(sub.first))
+            }
+        }
+    }
+    if (out.isEmpty()) out.add(MdSpan.Plain(text))
+    return out
+}
+
+/** 裸链接切分：返回 (文本, url?)，url 非空即链接段。 */
+internal fun splitBareUrls(text: String): List<Pair<String, String?>> {
+    val out = mutableListOf<Pair<String, String?>>()
+    val urlRe = Regex("""https?://[^\s<>"')\]]+""")
+    var lastEnd = 0
+    for (m in urlRe.findAll(text)) {
+        var url = m.value
+        // 裁尾巴：中英标点、右括号（markdown 裸链套括号常见）
+        url = url.trimEnd('.', ',', ';', ':', '!', '?', '。', '，', '！', '？', '；', '：', '、', '”', '’', '）')
+        if (url.endsWith(")") && url.count { it == '(' } < url.count { it == ')' }) {
+            url = url.dropLast(1)
+        }
+        if (m.range.first > lastEnd) out.add(text.substring(lastEnd, m.range.first) to null)
+        if (url.length > 8) out.add(url to url)
+        else out.add(m.value to null)
+        lastEnd = m.range.last + 1
+    }
+    if (lastEnd < text.length) out.add(text.substring(lastEnd) to null)
+    if (out.isEmpty()) out.add(text to null)
+    return out
+}
+
+/** 旧的行内 Bold/Italic/Code 逻辑（只吃纯文本块）。 */
+internal fun parseRichPlain(text: String): List<MdSpan> {
     val spans = mutableListOf<MdSpan>()
     val regex = Regex("""(\*\*(.+?)\*\*|`([^`]+)`|\*(.+?)\*)""")
     var lastEnd = 0
@@ -133,6 +190,7 @@ internal fun MdSpan.rawText(): String = when (this) {
     is MdSpan.Italic -> "*$text*"
     is MdSpan.InlineCode -> "`$text`"
     is MdSpan.Plain -> text
+    is MdSpan.Link -> if (text == url) url else "[$text]($url)"
 }
 
 internal fun MdSegment.rawText(): String = when (this) {
@@ -154,9 +212,25 @@ internal fun MarkdownText(
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     val copiedLabel = AppLocale.strings.copied
+    val s = AppLocale.strings
     fun copyRaw(raw: String) {
         clipboard.setText(AnnotatedString(raw))
         Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
+    }
+    // 点链弹框：打开 / 复制整条（不再靠系统选词，长按整段逻辑不动）
+    var linkDialogUrl by remember { mutableStateOf<String?>(null) }
+    fun copyLink(url: String) {
+        clipboard.setText(AnnotatedString(url))
+        Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
+        linkDialogUrl = null
+    }
+    fun openLink(url: String) {
+        linkDialogUrl = null
+        try {
+            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+        } catch (e: Exception) {
+            Toast.makeText(context, s.linkOpenFailed, Toast.LENGTH_SHORT).show()
+        }
     }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -233,6 +307,18 @@ internal fun MarkdownText(
                                 is MdSpan.Italic -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
                                     append(span.text)
                                 }
+                                is MdSpan.Link -> {
+                                    pushStringAnnotation("URL", span.url)
+                                    withStyle(
+                                        SpanStyle(
+                                            color = MaterialTheme.colorScheme.primary,
+                                            textDecoration = TextDecoration.Underline,
+                                        )
+                                    ) {
+                                        append(span.text)
+                                    }
+                                    pop()
+                                }
                                 is MdSpan.InlineCode -> withStyle(
                                     SpanStyle(
                                         fontFamily = FontFamily.Monospace,
@@ -246,15 +332,43 @@ internal fun MarkdownText(
                         }
                     }
                     SelectionContainer {
-                        Text(
+                        ClickableText(
                             text = annotated,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = color,
+                            style = MaterialTheme.typography.bodyMedium.copy(color = color),
+                            onClick = { offset ->
+                                annotated.getStringAnnotations("URL", offset, offset)
+                                    .firstOrNull()?.let { linkDialogUrl = it.item }
+                            },
                         )
                     }
                 }
                 }
             }
         }
+    }
+
+    // 链接动作框：打开 / 复制整条 / 关闭
+    linkDialogUrl?.let { url ->
+        AlertDialog(
+            onDismissRequest = { linkDialogUrl = null },
+            title = {
+                Text(
+                    text = url,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { copyLink(url) }) { Text(s.copyLink) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { openLink(url) }) { Text(s.openLink) }
+                    TextButton(onClick = { linkDialogUrl = null }) { Text(s.close) }
+                }
+            },
+        )
     }
 }
