@@ -518,9 +518,10 @@ data class TemplateEntry(
     val content: String = "",
 )
 
-/** 置顶条目：可多个，直达用第一个。 */
+/** 置顶条目：可多个；direct=true 的卡单独直达（直达用第一个勾的）。 */
 @Serializable
 data class PinnedEntry(
     val id: String = "",
     val dir: String? = null,
+    val direct: Boolean = false,
 )

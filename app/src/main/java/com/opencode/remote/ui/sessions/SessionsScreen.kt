@@ -76,17 +76,17 @@ fun SessionsScreen(
         onPauseOrDispose { /* no-op */ }
     }
 
-    // 启动直达置顶：开屏一次，第一个钉住的会话还在就直跳聊天（被删则静默回落列表）。
-    // 注意：绝不能用 plain remember 存"跳过"——导航离开组合即销毁，回来重置必重跳；
-    // 消费标记活在 VM（跟 back-stack entry 同寿），手动点卡也算消费。
+    // 启动直达：只认卡上单独勾的（老全局开关算在第一个置顶上）；数据没回来不算数；
+    // 一进程只评估一次有数据的快照——开关拨动、返回重载都不再跳。
     LaunchedEffect(uiState.pinned, uiState.autoDirectPin, uiState.allSessions) {
-        if (!viewModel.isDirectConsumed() && uiState.autoDirectPin) {
-            val pin = uiState.pinned.firstOrNull()
-            val found = pin?.let { p -> uiState.allSessions.find { it.id == p.id } }
-            if (pin != null && found != null) {
-                viewModel.markDirectConsumed()
-                onDirectChat(pin.id, found.resolvedDirectory ?: pin.dir)
-            }
+        if (viewModel.isDirectConsumed()) return@LaunchedEffect
+        if (uiState.isLoading || uiState.allSessions.isEmpty()) return@LaunchedEffect
+        viewModel.markDirectConsumed()
+        val pin = uiState.pinned.firstOrNull { it.direct }
+            ?: uiState.pinned.firstOrNull()?.takeIf { uiState.autoDirectPin }
+        val found = pin?.let { p -> uiState.allSessions.find { it.id == p.id } }
+        if (pin != null && found != null) {
+            onDirectChat(pin.id, found.resolvedDirectory ?: pin.dir)
         }
     }
 
@@ -209,13 +209,13 @@ fun SessionsScreen(
                                 item(key = "pinned_${pin.id}") {
                                     PinnedSessionCard(
                                         session = pinned,
-                                        autoDirect = uiState.autoDirectPin,
+                                        direct = pin.direct,
                                         onOpen = {
                                             viewModel.markDirectConsumed()
                                             onDirectChat(pin.id, pinned.resolvedDirectory ?: pin.dir)
                                         },
                                         onUnpin = { viewModel.togglePin(pin.id, null) },
-                                        onAutoDirectChange = viewModel::setAutoDirectPin,
+                                        onDirectChange = { viewModel.setPinDirect(pin.id, it) },
                                         modifier = Modifier.animateItemPlacement(tween(300)),
                                     )
                                 }
@@ -339,10 +339,10 @@ private fun ProjectCard(
 @Composable
 private fun PinnedSessionCard(
     session: SessionInfo,
-    autoDirect: Boolean,
+    direct: Boolean,
     onOpen: () -> Unit,
     onUnpin: () -> Unit,
-    onAutoDirectChange: (Boolean) -> Unit,
+    onDirectChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val s = AppLocale.strings
@@ -411,8 +411,8 @@ private fun PinnedSessionCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Switch(
-                    checked = autoDirect,
-                    onCheckedChange = onAutoDirectChange,
+                    checked = direct,
+                    onCheckedChange = onDirectChange,
                 )
             }
         }

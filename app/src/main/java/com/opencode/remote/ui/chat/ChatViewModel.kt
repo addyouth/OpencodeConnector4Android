@@ -1379,37 +1379,73 @@ class ChatViewModel @Inject constructor(
         if (engine == null) {
             pendingSpeak = messageId to clean
             _speakingId.value = messageId
-            try {
-                tts = TextToSpeech(appContext) { status ->
-                    ttsReady = status == TextToSpeech.SUCCESS
-                    if (!ttsReady) {
-                        Log.w(TAG, "tts init status=$status")
-                        try { Toast.makeText(appContext, "语音引擎启动失败", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
-                        stopSpeak()
-                    } else {
-                        // 简中不行退繁中/通用中文（部分引擎只认 CHINESE）
-                        var r = tts?.setLanguage(java.util.Locale.SIMPLIFIED_CHINESE)
-                        if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
-                            r = tts?.setLanguage(java.util.Locale.CHINESE)
-                        }
-                        if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
-                            try { Toast.makeText(appContext, "缺中文语音包，去系统设置下载", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
-                            ttsReady = false
-                            stopSpeak()
-                        } else {
-                            val eng = tts
-                            val pend = pendingSpeak
-                            pendingSpeak = null
-                            if (eng != null && pend != null) speakNow(pend.first, pend.second, eng)
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "tts init failed", e)
-                try { Toast.makeText(appContext, "语音引擎启动失败", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
-                stopSpeak()
-            }
+            startTtsEngine(null, emptySet())
         }
+    }
+
+    /** 起引擎（preferEngine=null 即系统默认）；ColorOS 这类默认引擎残了就往下顺位。 */
+    private fun startTtsEngine(preferEngine: String?, tried: Set<String>) {
+        try {
+            val listener = TextToSpeech.OnInitListener { status -> onTtsInit(status, preferEngine, tried) }
+            tts = if (preferEngine == null) TextToSpeech(appContext, listener)
+            else TextToSpeech(appContext, listener, preferEngine)
+        } catch (e: Exception) {
+            Log.w(TAG, "tts engine start failed ($preferEngine)", e)
+            onTtsEngineFailed(preferEngine, tried)
+        }
+    }
+
+    private fun onTtsInit(status: Int, engine: String?, tried: Set<String>) {
+        ttsReady = status == TextToSpeech.SUCCESS
+        if (!ttsReady) {
+            Log.w(TAG, "tts init status=$status engine=$engine")
+            onTtsEngineFailed(engine, tried)
+            return
+        }
+        // 简中不行退繁中/通用中文（部分引擎只认 CHINESE）
+        var r = tts?.setLanguage(java.util.Locale.SIMPLIFIED_CHINESE)
+        if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+            r = tts?.setLanguage(java.util.Locale.CHINESE)
+        }
+        if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+            try { Toast.makeText(appContext, "缺中文语音包，去系统设置下载", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
+            ttsReady = false
+            stopSpeak()
+            return
+        }
+        val eng = tts
+        val pend = pendingSpeak
+        pendingSpeak = null
+        if (eng != null && pend != null) speakNow(pend.first, pend.second, eng)
+    }
+
+    /** 默认引擎残了：枚举机上引擎顺位重试；一个没有就指路去装。 */
+    private fun onTtsEngineFailed(failedEngine: String?, tried: Set<String>) {
+        val done = tried + setOfNotNull(failedEngine)
+        val alts: List<Pair<String, String>> = try {
+            tts?.engines?.map { it.name to it.label }?.filter { it.first !in done } ?: emptyList()
+        } catch (_: Exception) { emptyList() }
+        try { tts?.shutdown() } catch (_: Exception) {}
+        tts = null
+        ttsReady = false
+        if (alts.isEmpty()) {
+            if (failedEngine == null) {
+                try { Toast.makeText(appContext, "没装TTS语音引擎，去应用市场装一个（如 谷歌TTS / 讯飞语记）", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
+            } else {
+                try { Toast.makeText(appContext, "语音引擎启动失败", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+            }
+            stopSpeak()
+            return
+        }
+        val (pkg, label) = alts.first()
+        try { Toast.makeText(appContext, "默认语音引擎不可用，切到${label}", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+        // stopSpeak 会清 pending：先存后恢复，朗读意图不断
+        val keep = pendingSpeak
+        val keepId = _speakingId.value
+        stopSpeak()
+        pendingSpeak = keep
+        _speakingId.value = keepId
+        startTtsEngine(pkg, done)
     }
 
     private fun speakNow(messageId: String, clean: String, engine: TextToSpeech) {
