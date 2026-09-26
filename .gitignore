@@ -59,3 +59,12 @@ AGENTS.md
 **/AGENTS.md
 OPENCODE_API.md
 [{*
+
+# PKCS#12 / 证书（原有 *.jks *.keystore 不覆盖 p12）
+*.p12
+*.cer
+*.der
+
+# 登录态 / cookie
+*cookies*.txt
+*.har
